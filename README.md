@@ -77,20 +77,27 @@ Bonsai has a small context window and the memory grows forever, so **the prompt 
 Key mechanisms:
 - **LightMem-style pre-compression (stage 1, no LLM):** filler like "um, yeah" is dropped and the stream is cut into topic segments by silence gaps / size before Bonsai sees anything → fewer, smaller Bonsai calls.
 - **Grounded extraction:** every fact must cite utterance ids that exist in the segment, otherwise it is rejected. Small model + memory-loss users = no hallucinated memories.
-- **Voice ⇄ name binding:** when Bonsai reads "Hi, it's Maya from next door", the speaker cluster's voiceprint is enrolled to Maya. Next time that voice appears, she is recognised instantly without the LLM.
+- **Voice ⇄ name binding, gated by evidence:** a name is validated first (placeholders, the owner, pronouns and forms of address like "Mom" are rejected; relations must be nouns such as `neighbour` or `granddaughter`). A voiceprint is enrolled only when the speaker introduced themselves ("Hi, it's Maya from next door", "Hey Mom, it's Sam") or said the name, so a hallucinated name cannot poison identity. Next time that voice appears, she is recognised instantly without the LLM.
+- **Multi-person facts:** `fact_people` links a fact to everyone it concerns, so "Sam is coming with Lily" is found from either person's partition. Duplicate facts are skipped, and a changed number (5 mg → 10 mg) supersedes the older fact.
 - **Sleep-time consolidation:** at dock, Bonsai selects the most useful facts for each core card and flags older facts superseded by newer ones. The card is assembled from source facts to prevent new prose from inventing details.
 - **MemGPT-style recall:** Bonsai sees core memory + a working context with a hard budget (2,400 chars). It uses native tool calls to `search`, `open_episode`, or `answer`. Old pages are evicted when the budget overflows. Bonsai plans subqueries, makes embeddings for a vector + BM25 shortlist, then semantically selects up to six pages before paging begins.
-- **Citations are verified:** an answer may only cite pages it actually loaded. Cited pages map back to utterance ids → audio clips.
+- **Citations are verified:** an answer may only cite pages it actually loaded, including the always-visible core cards. Cited pages map back to utterance ids → audio clips (or to a photo).
+- **Retrieval modes, with a real capability probe:** `hybrid-rerank` (default), `hybrid` and `bm25`. Embedding support is probed once against the server; if `/v1/embeddings` answers 501, dock and ask keep working in BM25 mode and `/health` says so. This is what makes the app safe to start without the embedding flag.
+- **Photo memory:** a local image is copied into `data/photos/`, Bonsai vision extracts grounded observations, they are indexed with Bonsai embeddings + FTS5, and answers cite the original photo. The proposed capture handoff is in [docs/PHOTO_HANDOFF.md](docs/PHOTO_HANDOFF.md); the shared contract is unchanged.
+- **Local actions with confirmation:** `play_original_clip` is read-only; `set_reminder`, `correct_memory` and `forget_memory` are two-phase — Bonsai proposes, the user confirms, then memory changes.
 - **Grammar-constrained output:** every Bonsai call sends a JSON schema to llama.cpp, so output is always parseable.
 
 ## 4. Repository layout
 
 ```
 docs/CONTRACT.md          the ONLY interface between the two halves — read this first
+docs/PHOTO_HANDOFF.md     proposed image handoff for capture (not yet in the contract)
+docs/MEMORY_STATUS.md     current memory status, retrieval modes and measurements
 contract/fixtures/*.jsonl hand-written sessions (Maya, Dr. Patel, Sam) with fake voiceprints
 capture/                  Swift · Argmax  → owner: Partner (Argmax lead)
 memory/                   Node 24 · Bonsai → owner: Farhan (memory/retrieval lead)
-data/                     runtime: inbox/, audio/, kindred.sqlite (git-ignored)
+bonsai-demo/              local PrismML checkout + 4B GGUF (git-ignored)
+data/                     runtime: inbox/, audio/, photos/, kindred.sqlite (git-ignored)
 ```
 
 ## 5. Division of work
@@ -98,6 +105,10 @@ data/                     runtime: inbox/, audio/, kindred.sqlite (git-ignored)
 We split along the contract, so each person can build and demo their half alone using the fixtures, then plug together.
 
 ### Farhan — `memory/` (Bonsai: memory + retrieval)
+
+**Status:** items 1–5 below are implemented on `bionic/bonsai-memory`; the memory visualisation
+data (people graph + recall traces) is exposed over HTTP, the UI itself is still open. See
+[docs/MEMORY_STATUS.md](docs/MEMORY_STATUS.md) for the current state and real-model numbers.
 1. **Extraction quality on real Bonsai 4B** (see Status for failures seen): speakers named from self-introductions ("it's Sam") not put in `mentioned`; reject placeholder names (`?`, `owner`, `Mom` as a person when it's the owner); relation as a noun (`neighbour`, not `next door`); first-person facts rewritten to third person.
 2. **Core memory prompt:** owner's card hallucinated ("your partner…"). Separate prompt for the owner vs. other people; only use facts given.
 3. **Recall quality:** answer combined questions (Sam's visit *and* Lily's allergy), resolve relative dates ("this Sunday" relative to recording date), prefer facts over raw utterances.

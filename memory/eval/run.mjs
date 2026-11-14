@@ -1,5 +1,6 @@
 // Real Bonsai fixture evaluation. Run with the server on localhost.
-// `--bm25` is a retrieval ablation; all language generation still uses Bonsai.
+// `--mode=bm25|hybrid|hybrid-rerank` selects the retrieval pipeline; language generation is
+// always Bonsai. The mode that actually ran (and whether it degraded) is printed with results.
 import path from 'node:path';
 import { openDb } from '../src/db.mjs';
 import { Bonsai } from '../src/bonsai.mjs';
@@ -7,8 +8,9 @@ import { ingestFile } from '../src/ingest.mjs';
 import { enrollOwner } from '../src/identity.mjs';
 import { dock } from '../src/dock.mjs';
 import { ask } from '../src/recall.mjs';
+import { resolveMode, describeMode } from '../src/capabilities.mjs';
 
-const cases = [
+export const QUESTIONS = [
   { q: 'Did anyone need help with their garden?', words: ['water', 'maya'], evidence: ['d1-porch#0005'] },
   { q: 'Where is the spare house key?', words: ['blue', 'pot'], evidence: ['d1-porch#0005'] },
   { q: 'Who is having an operation soon?', words: ['maya'], evidence: ['d1-porch#0003'] },
@@ -22,41 +24,85 @@ const cases = [
 ];
 
 const root = path.resolve(import.meta.dirname, '../..');
+
+export function fixtures(db) {
+  enrollOwner(db, [0.96, 0.04, 0.03, 0.02, 0.13, 0.02, 0.09, 0.02]);
+  for (const f of ['day1-porch-maya.jsonl', 'day1-clinic-patel.jsonl', 'day2-call-sam.jsonl'])
+    ingestFile(db, path.join(root, 'contract/fixtures', f));
+}
+
+/** Run one full fixture day in one retrieval mode. Returns per-question rows and timing. */
+export async function runMode(mode, { db = openDb(':memory:'), bonsai = new Bonsai(), today = '2026-11-13' } = {}) {
+  fixtures(db);
+  const started = Date.now();
+  const dockReport = await dock(db, bonsai, { mode });
+  const dockMs = Date.now() - started;
+  const rows = [];
+  for (const c of QUESTIONS) {
+    const t0 = Date.now();
+    let r;
+    try {
+      r = await ask(db, bonsai, c.q, { today, mode });
+    } catch (e) {
+      rows.push({ question: c.q, error: e.message, ms: Date.now() - t0 });
+      continue;
+    }
+    const answer = String(r.answer).toLowerCase();
+    // A refusal that happens to contain the keywords is not a correct answer.
+    const refused = /couldn['’]?t find|don['’]?t remember|do not remember|nothing in my memory|not in my memory/.test(answer);
+    const correct = !refused && c.words.every((w) => answer.includes(w));
+    const cited = new Set(r.clips.map((clip) => clip.id));
+    const grounded = c.evidence.every((id) => cited.has(id));
+    rows.push({ question: c.q, answer: r.answer, correct, refused, grounded, mode: r.mode,
+      expectedEvidence: c.evidence, citedEvidence: [...cited], ms: Date.now() - t0, steps: r.trace.length });
+  }
+  return { mode, dockReport, dockMs, rows, bonsaiCalls: bonsai.calls };
+}
+
+const isCli = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+if (isCli) {
+const modeArg = process.argv.find((a) => a.startsWith('--mode='))?.split('=')[1];
 const db = openDb(':memory:');
 const bonsai = new Bonsai();
-if (process.argv.includes('--bm25')) bonsai.embed = undefined;
-enrollOwner(db, [0.96, 0.04, 0.03, 0.02, 0.13, 0.02, 0.09, 0.02]);
-for (const f of ['day1-porch-maya.jsonl', 'day1-clinic-patel.jsonl', 'day2-call-sam.jsonl'])
-  ingestFile(db, path.join(root, 'contract/fixtures', f));
+const resolved = await resolveMode(bonsai);
+console.log(`retrieval: ${describeMode(resolved)}`);
 
 const started = Date.now();
-const dockReport = await dock(db, bonsai);
-const results = [];
-const caseArg = process.argv.find((arg) => arg.startsWith('--case='));
-const selectedCases = caseArg ? [cases[Number(caseArg.split('=')[1])]].filter(Boolean) : cases;
-for (const c of selectedCases) {
-  const t0 = Date.now();
-  const r = await ask(db, bonsai, c.q, { today: '2026-11-13' });
-  const answer = r.answer.toLowerCase();
-  const correct = c.words.every((w) => answer.includes(w));
-  const cited = new Set(r.clips.map((clip) => clip.id));
-  const grounded = c.evidence.every((id) => cited.has(id));
-  results.push({ question: c.q, answer: r.answer, correct, grounded, expectedEvidence: c.evidence,
-    citedEvidence: [...cited], ms: Date.now() - t0, calls: r.trace.length });
-  console.log(`${correct ? '✓' : '✗'} answer  ${grounded ? '✓' : '✗'} evidence  ${c.q} (${results.at(-1).ms} ms)`);
+const report = await runMode(modeArg ?? resolved.mode, { db, bonsai });
+
+for (const r of report.rows) {
+  const mark = (b) => (b ? '✓' : '✗');
+  console.log(`${mark(r.correct)} answer  ${mark(r.grounded)} evidence  ${r.question} (${r.ms} ms)`
+    + (r.correct && r.grounded ? '' : `\n     → ${r.answer ?? r.error}`));
 }
-const sum = (key) => results.filter((r) => r[key]).length;
-const callStats = Object.values(bonsai.calls.reduce((acc, c) => {
+const sum = (key) => report.rows.filter((r) => r[key]).length;
+const totals = Object.values(report.bonsaiCalls.reduce((acc, c) => {
   const key = c.tool ? `${c.name}:${c.tool}` : c.name;
   const row = (acc[key] ??= { name: key, count: 0, ms: 0 });
   row.count++;
   row.ms += c.ms;
   return acc;
 }, {}));
-const summary = { mode: process.argv.includes('--bm25') ? 'bm25' : 'bonsai_hybrid',
-  questions: selectedCases.length, answerCorrect: sum('correct'), evidenceCorrect: sum('grounded'),
-  both: results.filter((r) => r.correct && r.grounded).length,
-  dock: { sessions: dockReport.sessions.length, facts: dockReport.facts, embeddings: dockReport.embeddings ?? null },
-  totalMs: Date.now() - started, bonsaiCalls: callStats,
+const summary = {
+  mode: report.mode,
+  requested: resolved.requested,
+  degraded: resolved.degraded,
+  embeddings: resolved.caps,
+  questions: report.rows.length,
+  answerCorrect: sum('correct'),
+  evidenceCorrect: sum('grounded'),
+  both: report.rows.filter((r) => r.correct && r.grounded).length,
+  errors: report.rows.filter((r) => r.error).length,
+  refused: report.rows.filter((r) => r.refused).length,
+  dock: { sessions: report.dockReport.sessions.length, facts: report.dockReport.facts,
+    duplicates: report.dockReport.duplicates, superseded: report.dockReport.superseded,
+    rejectedNames: report.dockReport.rejected_names, embeddings: report.dockReport.embeddings ?? null, ms: report.dockMs },
+  latencyMs: {
+    total: Date.now() - started,
+    perQuestion: report.rows.map((r) => r.ms),
+    median: [...report.rows.map((r) => r.ms)].sort((a, b) => a - b)[Math.floor(report.rows.length / 2)] ?? null,
+  },
+  bonsaiCalls: totals,
 };
-console.log(JSON.stringify({ summary, results }, null, 2));
+console.log(JSON.stringify({ summary, results: report.rows }, null, 2));
+}
