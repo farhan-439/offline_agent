@@ -71,6 +71,13 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 }
 
 function pageByRef(db, ref) {
+  if (ref.startsWith('P:')) {
+    const p = db.prepare('SELECT id, name, relation, core, last_seen FROM people WHERE id = ?').get(ref.slice(2));
+    if (!p || !p.core) return null;
+    const facts = db.prepare("SELECT evidence FROM facts WHERE person_id = ? AND status = 'active' ORDER BY observed_at DESC LIMIT 4").all(p.id);
+    return { ref, layer: 'core', personId: p.id, text: `${p.name}${p.relation ? ` · ${p.relation}` : ''}: ${p.core}`,
+      when: p.last_seen, evidence: [...new Set(facts.flatMap((f) => parse(f.evidence, [])))].slice(0, 4) };
+  }
   if (/^F\d+$/.test(ref)) {
     const f = db.prepare(`SELECT f.*, p.name AS person FROM facts f LEFT JOIN people p ON p.id = f.person_id
       WHERE f.rowid = ? AND f.status = 'active'`).get(Number(ref.slice(1)));

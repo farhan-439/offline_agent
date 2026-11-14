@@ -6,7 +6,7 @@
 import { search, hybridSearch, readEpisode, evidenceClips } from './retrieve.mjs';
 import { resolveWhen } from './temporal.mjs';
 
-export const WORKING_BUDGET = 2400; // chars of paged-in memory; Bonsai's window must also fit prompt + answer
+export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
 export const MAX_STEPS = 4;
 export const RETRIEVAL_K = 6;
 
@@ -142,7 +142,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       }
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
-      return { answer: out.answer, cites, clips, trace, grounded: cites.length > 0 };
+      return { answer: out.answer, cites, clips, trace, grounded: clips.length > 0 };
     } else {
       trace.push({ step, action: out.action, note: 'missing argument' });
     }

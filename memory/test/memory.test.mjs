@@ -190,6 +190,20 @@ test('Bonsai plans and filters retrieval before paged answering', async () => {
   assert.equal(result.trace[1].action, 'rerank');
 });
 
+test('a core card outside the always-visible roster remains retrievable', async () => {
+  const { db } = await dockedDb();
+  for (let i = 0; i < 15; i++) {
+    db.prepare('INSERT INTO people (id, name, core, created_at, updated_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(`p_extra_${i}`, `Extra ${i}`, `Extra ${i} keeps a compass near the ferry`, '2026-11-01', '2026-11-01', `2026-11-${String(i + 1).padStart(2, '0')}`);
+  }
+  const bonsai = { model: 'core-test', async embed(texts) {
+    return (Array.isArray(texts) ? texts : [texts]).map((s) => /compass|ferry/i.test(s) ? [1, 0] : [0, 1]);
+  } };
+  await indexMemories(db, bonsai);
+  const hits = await hybridSearch(db, bonsai, 'Where is the ferry compass?', { k: 6 });
+  assert.ok(hits.some((h) => h.ref.startsWith('P:p_extra_')));
+});
+
 test('Bonsai embedding client preserves vector order and traces the call', async () => {
   const client = new Bonsai({ fetchFn: async (_url, options) => {
     assert.deepEqual(JSON.parse(options.body).input, ['first', 'second']);

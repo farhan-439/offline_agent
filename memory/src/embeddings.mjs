@@ -49,7 +49,7 @@ export async function indexMemories(db, bonsai, { batchSize = 16 } = {}) {
 
 export function nearestRefs(db, vector, model, { limit = 20 } = {}) {
   return db.prepare('SELECT ref, dim, vector FROM embeddings WHERE model = ?').all(model)
-    .filter((r) => r.dim === vector.length && !r.ref.startsWith('P:'))
+    .filter((r) => r.dim === vector.length)
     .map((r) => ({ ref: r.ref, similarity: cosineVector(vector, unpack(r.vector)) }))
     .sort((a, b) => b.similarity - a.similarity).slice(0, limit);
 }
