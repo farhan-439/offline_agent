@@ -132,10 +132,11 @@ See [current status and build plan](docs/MEMORY_STATUS.md) for completed code, m
 
 ## 7. Running it
 
-**Bonsai server** (from the official PrismML Bonsai demo checkout):
+**Bonsai server** (the local PrismML Bonsai demo checkout is in `bonsai-demo/`, ignored by this repo):
 ```sh
+cd bonsai-demo
 BONSAI_FAMILY=bonsai2 BONSAI_MODEL=4B BONSAI_CTX=8192 BONSAI_THINKING=0 BONSAI_NGL=99 BONSAI_HOST=127.0.0.1 \
-  ./scripts/start_llama_server.sh -np 1 --alias bonsai-4b
+  ./scripts/start_llama_server.sh -np 1 --alias bonsai-4b --embeddings --pooling mean
 ```
 
 **Memory** (Node 24+, no dependencies):

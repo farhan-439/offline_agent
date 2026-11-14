@@ -8,5 +8,7 @@ data/
 *.wav
 *.m4a
 models/
+/bonsai-demo/
+/KINDRED_HANDOVER.md
 .env
 .DS_Store
