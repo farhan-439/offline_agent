@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Kindred memory engine: Bonsai-driven layered people memory with paged recall",
-  "engines": { "node": ">=24" },
-  "bin": { "kindred": "src/cli.mjs" },
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "kindred": "src/cli.mjs"
+  },
   "scripts": {
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs",
     "demo": "node --disable-warning=ExperimentalWarning src/cli.mjs demo",
@@ -13,6 +17,8 @@
     "stress": "node --disable-warning=ExperimentalWarning eval/stress.mjs",
     "compare:embeddings": "node --disable-warning=ExperimentalWarning eval/embedding-compare-cli.mjs",
     "server": "node --disable-warning=ExperimentalWarning src/server.mjs",
-    "kindred": "node --disable-warning=ExperimentalWarning src/cli.mjs"
+    "kindred": "node --disable-warning=ExperimentalWarning src/cli.mjs",
+    "compare": "node --disable-warning=ExperimentalWarning eval/compare.mjs",
+    "summarize": "node --disable-warning=ExperimentalWarning eval/summarize.mjs"
   }
 }

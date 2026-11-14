@@ -98,7 +98,8 @@ test('dock builds people from speech, binds voices, and rejects ungrounded facts
   // owner was matched by voice, not created again
   assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-clinic' AND speaker = 'S0'").get().how, 'voice');
   // Maya was named by Bonsai from content, so her cluster's voiceprint is now enrolled
-  assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-porch' AND speaker = 'S1'").get().how, 'named');
+  // Maya introduces herself ("it's Maya from next door"), so the deterministic intro path binds her voice
+  assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-porch' AND speaker = 'S1'").get().how, 'intro');
   assert.ok(db.prepare("SELECT core FROM people WHERE name = 'Maya'").get().core.startsWith('Maya'));
 });
 
@@ -136,7 +137,7 @@ test('recall pages memory in, validates citations, and returns audio evidence', 
   assert.deepEqual(r.cites, [real]);
   assert.ok(r.grounded);
   assert.ok(r.clips.some((c) => c.id === 'd2-call#0003' && c.speaker === 'Sam'));
-  assert.equal(r.trace[1].action, 'search');
+  assert.ok(r.trace.some((t) => t.action === 'search' && t.query));
   const prompt = bonsai.calls.filter((c) => c.name === 'recall_step').at(-1).user;
   const working = prompt.split('WORKING MEMORY')[1].split('QUESTION')[0];
   assert.ok(working.length <= WORKING_BUDGET + 200, 'working memory stays within budget');
@@ -186,8 +187,9 @@ test('Bonsai plans and filters retrieval before paged answering', async () => {
   assert.deepEqual(calls, ['plan_query', 'rerank', 'recall_step']);
   assert.equal(result.grounded, true);
   assert.ok(result.clips.some((c) => c.id === 'd1-porch#0005'));
-  assert.equal(result.trace[0].action, 'plan_query');
-  assert.equal(result.trace[1].action, 'rerank');
+  assert.ok(result.trace.some((t) => t.action === 'plan_query'));
+  assert.ok(result.trace.some((t) => t.action === 'rerank'));
+  assert.equal(result.trace[0].action, 'mode');
 });
 
 test('a core card outside the always-visible roster remains retrievable', async () => {

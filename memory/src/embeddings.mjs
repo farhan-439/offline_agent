@@ -22,6 +22,9 @@ export function memoryDocuments(db) {
     docs.push({ ref: `E${e.rowid}`, text: e.summary });
   for (const p of db.prepare("SELECT id, name, relation, core FROM people WHERE core IS NOT NULL AND core != ''").all())
     docs.push({ ref: `P:${p.id}`, text: `${p.name} · ${p.relation ?? ''} · ${p.core}` });
+  for (const o of db.prepare(`SELECT o.rowid, o.kind, o.text, p.caption, p.taken_at FROM photo_observations o
+      JOIN photos p ON p.id = o.photo_id`).all())
+    docs.push({ ref: `O${o.rowid}`, text: `${o.caption ? `${o.caption} · ` : ''}${o.kind} · ${o.text}${o.taken_at ? ` · ${o.taken_at}` : ''}` });
   return docs;
 }
 
@@ -44,6 +47,7 @@ export async function indexMemories(db, bonsai, { batchSize = 16 } = {}) {
     }
   }
   db.prepare("DELETE FROM embeddings WHERE ref LIKE 'F%' AND NOT EXISTS (SELECT 1 FROM facts WHERE 'F' || rowid = embeddings.ref AND status = 'active')").run();
+  db.prepare("DELETE FROM embeddings WHERE ref LIKE 'O%' AND NOT EXISTS (SELECT 1 FROM photo_observations WHERE 'O' || rowid = embeddings.ref)").run();
   return { indexed: pending.length, total: docs.length };
 }
 
