@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS clusters (
 -- People graph
 CREATE TABLE IF NOT EXISTS people (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, relation TEXT, is_owner INTEGER NOT NULL DEFAULT 0,
-  core TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
+  core TEXT, core_fact_ids TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
 );
 CREATE TABLE IF NOT EXISTS voices (
   person_id TEXT PRIMARY KEY REFERENCES people(id), vector TEXT NOT NULL, samples INTEGER NOT NULL
@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS photo_observations (
   text TEXT NOT NULL, confidence REAL, created_at TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS photo_observations_fts USING fts5(text);
+
+-- Direct user inputs for the local retrieval tester. Keep the exact words as evidence.
+CREATE TABLE IF NOT EXISTS input_notes (
+  rowid INTEGER PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS input_notes_fts USING fts5(text);
 
 -- Which people appear in a photo (validated names only)
 CREATE TABLE IF NOT EXISTS photo_people (
@@ -117,6 +123,9 @@ export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta
   if (!factCols.has('scope')) db.exec("ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'");
   if (!factCols.has('uses')) db.exec('ALTER TABLE facts ADD COLUMN uses INTEGER NOT NULL DEFAULT 0');
   if (!factCols.has('last_used')) db.exec('ALTER TABLE facts ADD COLUMN last_used TEXT');
+  // which source facts assembled a person's core card (review fix on main)
+  if (!db.prepare('PRAGMA table_info(people)').all().some((c) => c.name === 'core_fact_ids'))
+    db.exec('ALTER TABLE people ADD COLUMN core_fact_ids TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS fact_people_person ON fact_people(person_id)');
   db.exec('CREATE INDEX IF NOT EXISTS facts_person_status ON facts(person_id, status)');
   db.exec('CREATE INDEX IF NOT EXISTS photo_obs_photo ON photo_observations(photo_id)');

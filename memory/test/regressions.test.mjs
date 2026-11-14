@@ -11,7 +11,7 @@ import { openDb } from '../src/db.mjs';
 import { ingestFile, ingestEvents, readSessionFile } from '../src/ingest.mjs';
 import { enrollOwner } from '../src/identity.mjs';
 import { dock } from '../src/dock.mjs';
-import { ask } from '../src/recall.mjs';
+import { ask, missedFoodAllergy } from '../src/recall.mjs';
 import { search, hybridSearch } from '../src/retrieve.mjs';
 import { indexMemories, memoryDocuments } from '../src/embeddings.mjs';
 import { ingestPhoto } from '../src/photos.mjs';
@@ -272,6 +272,17 @@ test('compound questions keep one retrieval hit per subquestion', async () => {
   assert.ok(r.clips.some((c) => c.id === 'd2-call#0004'));
 });
 
+test('cooking recall rejects medication advice that omits a cited food allergy', () => {
+  const question = 'When is Sam coming and is there anything I should not cook?';
+  const clips = [
+    { text: 'Lily is allergic to peanuts, so no peanut cookies this time.' },
+    { text: 'Avoid potassium supplements and grapefruit juice while taking lisinopril.' },
+  ];
+  assert.equal(missedFoodAllergy(question, 'Avoid potassium supplements and grapefruit juice.', clips), 'peanuts');
+  assert.equal(missedFoodAllergy(question, 'Lily is allergic to peanuts; do not make peanut cookies.', clips), null);
+  assert.equal(missedFoodAllergy('What did the doctor say to avoid with medicine?', 'Avoid potassium supplements.', clips), null);
+});
+
 // ---------- photo memory ----------
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -283,7 +294,8 @@ test('photo memory: vision observations are searchable and answers cite the orig
   writeFileSync(file, PNG);
   const bonsai = {
     model: 'fake',
-    async vision() {
+    async vision({ name }) {
+      if (name === 'photo_answer') return { answer: 'It was a blue birthday cake.', visible: true };
       return { caption: 'A blue birthday cake on a table', observations: [
         { kind: 'object', text: 'blue birthday cake', confidence: 0.9 },
         { kind: 'person', text: 'a woman smiling', confidence: 0.8 },
@@ -345,6 +357,8 @@ test('state-changing actions need confirmation; forgetting removes memories from
   const corrected = await runAction(db, null, { id: correction.id, confirm: true }, { confirm: true });
   assert.equal(corrected.status, 'applied');
   assert.ok(db.prepare("SELECT 1 FROM facts WHERE text = 'Avoid potassium supplements only' AND status = 'active'").get());
+  assert.equal(db.prepare('SELECT evidence FROM facts WHERE rowid = ?').get(Number(corrected.ref.slice(1))).evidence, '[]',
+    'a user correction must not cite old audio as proof of its new wording');
 
   const reminder = proposeAction(db, { kind: 'set_reminder', text: 'take the new pill', due: 'tomorrow' });
   await runAction(db, null, { id: reminder.id, confirm: true }, { confirm: true });
@@ -419,6 +433,26 @@ test('citation usage is counted only when a memory shapes an answer', async () =
   const row = db.prepare('SELECT uses, last_used FROM facts WHERE rowid = ?').get(fact.rowid);
   assert.equal(row.uses, 1);
   assert.ok(row.last_used);
+});
+
+test('a pending action requires confirmation and a failed action remains pending', async () => {
+  const { db } = await docked();
+  const reminder = proposeAction(db, { kind: 'set_reminder', text: 'Call Maya' });
+  await assert.rejects(runAction(db, null, { kind: 'set_reminder', text: 'Call Maya', confirm: true }),
+    /confirm a pending action by id/);
+  const unchecked = await runAction(db, null, { id: reminder.id });
+  assert.equal(unchecked.status, 'needs_confirmation');
+  assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 0);
+  assert.equal(db.prepare('SELECT applied FROM memory_actions WHERE id = ?').get(reminder.id).applied, 0);
+
+  const failed = proposeAction(db, { kind: 'correct_memory', ref: 'F999999', text: 'A correction' });
+  await assert.rejects(runAction(db, null, { id: failed.id, confirm: true }), /no such memory/);
+  assert.equal(db.prepare('SELECT applied FROM memory_actions WHERE id = ?').get(failed.id).applied, 0);
+
+  const applied = await runAction(db, null, { id: reminder.id, confirm: true });
+  assert.equal(applied.status, 'applied');
+  assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 1);
+  assert.equal((await runAction(db, null, { id: reminder.id, confirm: true })).status, 'already_applied');
 });
 
 // ---------- demo view data ----------

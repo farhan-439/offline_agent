@@ -21,7 +21,7 @@ export function resolvePersonId(db, person) {
 
 /**
  * Returns memory items: { ref, layer, text, personId?, when?, evidence: [utterance ids], score }
- * ref is what Bonsai cites: F12 (fact), E3 (episode), U:<utterance id>, O7 (photo observation).
+ * ref is what Bonsai cites: F12 (fact), E3 (episode), U:<utterance id>, O7 (photo observation), N4 (typed input).
  */
 export function search(db, query, { person = null, limit = 6, now = Date.now() } = {}) {
   const q = ftsQuery(query);
@@ -48,7 +48,7 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 
   for (const f of facts.values()) items.push({
     ref: `F${f.rowid}`, layer: 'fact', personId: f.person_id,
-    text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
+    text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
     when: f.observed_at, evidence: parse(f.evidence, []), bm25: f.rank,
   });
 
@@ -65,12 +65,18 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
         WHERE photo_observations_fts MATCH ? ORDER BY rank LIMIT 10`).all(q)) {
       items.push({ ref: `O${o.rowid}`, layer: 'photo', text: `${o.kind}: ${o.text}`, when: o.created_at, evidence: [], bm25: o.rank, photoId: o.photo_id });
     }
+    for (const note of db.prepare(`SELECT n.*, bm25(input_notes_fts) AS rank FROM input_notes_fts
+        JOIN input_notes n ON n.rowid = input_notes_fts.rowid
+        WHERE input_notes_fts MATCH ? ORDER BY rank LIMIT 40`).all(q)) {
+      items.push({ ref: `N${note.rowid}`, layer: 'input', text: note.text, when: note.created_at,
+        evidence: [], bm25: note.rank, noteId: note.rowid });
+    }
   }
 
   // stage B: normalise BM25 (lower is better in SQLite) and blend
   const ranks = items.map((i) => i.bm25).filter((r) => r < 0);
   const best = Math.min(...ranks, -1e-9);
-  const layerWeight = { fact: 1.0, episode: 0.8, photo: 0.75, utterance: 0.6 };
+  const layerWeight = { input: 1.1, fact: 1.0, episode: 0.8, photo: 0.75, utterance: 0.6 };
   for (const i of items) {
     const rel = i.bm25 < 0 ? i.bm25 / best : 0.4; // person-only matches get a floor
     i.score = layerWeight[i.layer] * (0.7 * rel + 0.2 * recency(i.when, now) + (pid && (i.personId === pid) ? 0.3 : 0));
@@ -89,10 +95,16 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 }
 
 function pageByRef(db, ref) {
+  if (/^N\d+$/.test(ref)) {
+    const note = db.prepare('SELECT rowid, text, created_at FROM input_notes WHERE rowid = ?').get(Number(ref.slice(1)));
+    return note && { ref, layer: 'input', text: note.text, when: note.created_at,
+      evidence: [], noteId: note.rowid };
+  }
   if (ref.startsWith('P:')) {
-    const p = db.prepare('SELECT id, name, relation, core, last_seen FROM people WHERE id = ?').get(ref.slice(2));
+    const p = db.prepare('SELECT id, name, relation, core, core_fact_ids, last_seen FROM people WHERE id = ?').get(ref.slice(2));
     if (!p || !p.core) return null;
-    const facts = db.prepare("SELECT evidence FROM facts WHERE person_id = ? AND status = 'active' ORDER BY observed_at DESC LIMIT 4").all(p.id);
+    const ids = parse(p.core_fact_ids, []).filter(Number.isInteger);
+    const facts = ids.flatMap((id) => db.prepare("SELECT evidence FROM facts WHERE rowid = ? AND person_id = ? AND status = 'active'").all(id, p.id));
     return { ref, layer: 'core', personId: p.id, text: `${p.name}${p.relation ? ` · ${p.relation}` : ''}: ${p.core}`,
       when: p.last_seen, evidence: [...new Set(facts.flatMap((f) => parse(f.evidence, [])))].slice(0, 4) };
   }
@@ -102,7 +114,7 @@ function pageByRef(db, ref) {
     if (!f) return null;
     const people = db.prepare('SELECT p.name FROM fact_people fp JOIN people p ON p.id = fp.person_id WHERE fp.fact = ?').all(Number(ref.slice(1))).map((r) => r.name);
     return { ref, layer: 'fact', personId: f.person_id,
-      text: `${f.person ?? '?'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
+      text: `${f.person ?? '?'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
       when: f.observed_at, evidence: parse(f.evidence, []) };
   }
   if (/^E\d+$/.test(ref)) {

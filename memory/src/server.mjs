@@ -1,6 +1,11 @@
 // Long-running localhost bridge for capture and UI. Dock/ingest/ask/photo are serialized;
 // voice identification reads the already-docked cards immediately.
+//
+// Two kinds of typed memory live side by side and stay visibly distinct:
+//   N<id>  exact Inputs typed in the lab        (/input, /inputs)
+//   F<id>  Ledger facts, inferred or user-saved (/memories, /memory)
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openDb } from './db.mjs';
@@ -9,18 +14,41 @@ import { ingestEvents, ingestFile } from './ingest.mjs';
 import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
-import { resolveMode, describeMode } from './capabilities.mjs';
-import { ingestPhoto } from './photos.mjs';
+import { resolveMode, describeMode, MODES } from './capabilities.mjs';
+import { ingestPhoto, askPhoto, uploadPhoto } from './photos.mjs';
 import { runAction, pendingActions } from './actions.mjs';
+import { addInput, listInputs } from './inputs.mjs';
 import { listMemories, rememberMemory } from './memories.mjs';
+
+const PUBLIC = path.resolve(import.meta.dirname, '../public');
+const ROOT = path.resolve(import.meta.dirname, '../..');
+const ASSETS = new Map([
+  ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/lab.css', ['lab.css', 'text/css; charset=utf-8']],
+  ['/lab.js', ['lab.js', 'text/javascript; charset=utf-8']],
+]);
+
+const MAX_JSON_BODY = 5_000_000;
 
 async function bodyOf(req) {
   let text = '';
   for await (const chunk of req) {
     text += chunk;
-    if (text.length > 5_000_000) throw new Error('request body too large');
+    if (text.length > MAX_JSON_BODY) throw new Error('request body too large');
   }
   return text ? JSON.parse(text) : {};
+}
+
+/** Raw bytes for the photo upload; the browser cannot hand the server a filesystem path. */
+async function rawBodyOf(req, limit) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw Object.assign(new Error('image too large'), { statusCode: 413 });
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 export function peopleGraph(db) {
@@ -41,11 +69,33 @@ export function createHandler(db, bonsai) {
   };
   return async (req, res) => {
     const send = (status, data) => {
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(data));
+    };
+    const sendAsset = (name, type) => {
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store',
+        'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'" });
+      res.end(readFileSync(path.join(PUBLIC, name)));
     };
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
+      if (req.method === 'GET' && ASSETS.has(url.pathname)) return sendAsset(...ASSETS.get(url.pathname));
+
+      // cited images: the stored original, served read-only from the ignored data directory
+      const photoMatch = url.pathname.match(/^\/photo\/([A-Za-z0-9_-]+)$/);
+      if (req.method === 'GET' && photoMatch) {
+        const row = db.prepare('SELECT path, mime FROM photos WHERE id = ?').get(photoMatch[1]);
+        if (!row) return send(404, { error: 'photo not found' });
+        const abs = path.resolve(ROOT, row.path);
+        if (!abs.startsWith(path.join(ROOT, 'data') + path.sep)) return send(403, { error: 'photo outside data directory' });
+        try {
+          const bytes = readFileSync(abs);
+          res.writeHead(200, { 'content-type': row.mime || 'application/octet-stream', 'cache-control': 'no-store', 'content-length': bytes.length });
+          return res.end(bytes);
+        } catch { return send(404, { error: 'photo file missing on disk' }); }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/inputs') return send(200, { inputs: listInputs(db) });
       if (req.method === 'GET' && url.pathname === '/health') {
         const mode = await resolveMode(bonsai);
         return send(200, { ok: true, model: bonsai?.model ?? null, retrievalMode: mode.mode,
@@ -57,7 +107,7 @@ export function createHandler(db, bonsai) {
           q: url.searchParams.get('q'),
           person: url.searchParams.get('person'),
           status: url.searchParams.get('status') ?? 'active',
-          limit: Number(url.searchParams.get('limit') ?? 100),
+          limit: Number(url.searchParams.get('limit') ?? 200),
         });
         return send(200, { memories });
       }
@@ -69,7 +119,24 @@ export function createHandler(db, bonsai) {
       }
       if (req.method === 'GET' && url.pathname === '/actions') return send(200, { pending: pendingActions(db) });
       if (req.method !== 'POST') return send(404, { error: 'unknown route' });
+
+      // Raw image upload: the browser cannot supply a filesystem path, so it posts the bytes.
+      if (url.pathname === '/upload-photo') {
+        const limit = Number(process.env.KINDRED_MAX_UPLOAD_BYTES || 12 * 1024 * 1024);
+        const buffer = await rawBodyOf(req, limit);
+        const people = (url.searchParams.get('people') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+        const note = url.searchParams.get('note') || null;
+        const takenAt = url.searchParams.get('takenAt') || null;
+        const mime = (req.headers['content-type'] ?? '').split(';')[0].trim();
+        return send(200, await serial(() => uploadPhoto(db, bonsai, { buffer, mime, note, takenAt, people })));
+      }
+
       const input = await bodyOf(req);
+      if (url.pathname === '/input') {
+        if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 4000)
+          return send(400, { error: 'Input must contain 1–4,000 characters' });
+        return send(200, await serial(() => addInput(db, bonsai, input.text)));
+      }
       if (url.pathname === '/identify' || url.pathname === '/who') {
         if (!Array.isArray(input.voiceprint)) return send(400, { error: 'voiceprint array required' });
         const result = await whoIsThis(db, null, input.voiceprint);
@@ -82,17 +149,23 @@ export function createHandler(db, bonsai) {
       if (url.pathname === '/dock') return send(200, await serial(() => dock(db, bonsai)));
       if (url.pathname === '/ask') {
         if (typeof input.question !== 'string' || !input.question.trim()) return send(400, { error: 'question required' });
+        if (input.mode && !MODES.includes(input.mode)) return send(400, { error: 'invalid retrieval mode' });
         return send(200, await serial(() => ask(db, bonsai, input.question, input.mode ? { mode: input.mode } : {})));
+      }
+      if (url.pathname === '/ask-photo') {
+        if (typeof input.id !== 'string' || typeof input.question !== 'string' || !input.question.trim())
+          return send(400, { error: 'photo id and question required' });
+        return send(200, await serial(() => askPhoto(db, bonsai, input.id, input.question)));
       }
       if (url.pathname === '/ingest-photo' || url.pathname === '/photo') {
         if (typeof input.file !== 'string') return send(400, { error: 'file (local path) required' });
         return send(200, await serial(() => ingestPhoto(db, bonsai, input)));
       }
-      if (url.pathname === '/action') return send(200, await serial(() => runAction(db, bonsai, input, { confirm: input.confirm === true })));
       if (url.pathname === '/memory') return send(200, { memory: await serial(() => rememberMemory(db, bonsai, input)) });
+      if (url.pathname === '/action') return send(200, await serial(() => runAction(db, bonsai, input, { confirm: input.confirm === true })));
       return send(404, { error: 'unknown route' });
     } catch (error) {
-      return send(500, { error: error.message });
+      send(error.statusCode ?? 500, { error: error.message });
     }
   };
 }

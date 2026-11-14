@@ -70,6 +70,12 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 
 `npm run server` keeps memory loaded on `127.0.0.1:8787` (`KINDRED_PORT` overrides the port). POST JSON to `/ingest` with `{"file":"/path/to/session.jsonl"}` or `{"events":[...]}`, `/dock` with `{}`, `/ask` with `{"question":"..."}` (optional `"mode"`), and `/identify` with `{"speaker":"S1","voiceprint":[...]}`. `/identify` reads the docked card without waiting for a Bonsai generation call, keeping live recognition responsive. This service does not change the capture contract.
 
+### Input Lab
+
+For a hands-on retrieval test, start the local Bonsai 4B server, then run `cd memory && npm run lab` and open `http://127.0.0.1:8787/`. The lab uses its own `data/input-lab.sqlite` file so experiments do not mix with captured conversations. Add text under **Input**, then ask a question in different words. Bonsai embeds the exact input when its embedding endpoint is enabled; keyword search remains available. The answer shows the exact saved inputs it cited and a search trace. The retrieval selector lets you compare keywords, Bonsai vectors, and Bonsai's selection step. All requests stay on this Mac.
+
+The lab stores the original text as its source. It does not turn a typed input into an extracted fact first, so you can judge retrieval without extraction changing your wording. To clear the lab, stop the server and remove the gitignored `data/input-lab.sqlite` file and its SQLite sidecar files.
+
 | Endpoint | Returns |
 |---|---|
 | `GET /health` | active retrieval mode, embedding capability, model |
@@ -79,6 +85,7 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 | `GET /traces?limit=20` | stored recall traces: plan, pages loaded, evictions, citations |
 | `GET /actions` | pending (unconfirmed) actions |
 | `POST /ingest-photo` | `{"file":"/local/path.jpg","note":"...","takenAt":"...","people":["Maya"]}` |
+| `POST /ask-photo` | `{"id":"ph_...","question":"What does the sign say?"}` reopens the stored image with Bonsai vision |
 | `POST /action` | `{"kind":"set_reminder",...}` proposes; `{"id":7,"confirm":true}` applies |
 
 ## Photo memory
@@ -87,7 +94,10 @@ A local image is copied into `data/photos/` (SHA-256 dedupe), Bonsai vision extr
 up to eight observations, empty or low-confidence observations are dropped, and the text is indexed
 with Bonsai embeddings and FTS5. `ask` can cite a photo observation (`O12`) and the result carries
 the original photo in `photos[]` as evidence. `docs/PHOTO_HANDOFF.md` holds the proposed image event
-for the capture side; `docs/CONTRACT.md` is unchanged.
+for the capture side; `docs/CONTRACT.md` is unchanged. For a question explicitly about the only
+stored photo, `ask` reinspects the original image so details omitted from the first-pass observations
+can still be answered. With multiple photos, use `/ask-photo` with an id when retrieval cannot
+identify which image the user means.
 
 ## Local actions
 
@@ -99,7 +109,11 @@ Bonsai can call `search_memory`, `open_episode`, `answer_memory`, `play_original
 `set_reminder`, `correct_memory` and `forget_memory`. Only `play_original_clip` is read-only. The
 three state-changing actions are two-phase: recall returns a proposal and a spoken confirmation
 question and writes nothing; the change is applied only through
-`POST /action {"id":...,"confirm":true}`. Forgetting retracts facts (they stop being retrieved) and
-clears the person's core card; corrections supersede the old fact and re-index.
+`POST /action {"id":...,"confirm":true}`. The current `forget_memory` action retracts extracted
+facts and clears the person's core card. **It is not full deletion:** original utterances, episode
+summaries and audio remain available and may still be found. Its confirmation text states this.
+Full conversation/person deletion across L0–L3 and audio remains planned. Corrections supersede
+the old fact and re-index. A user correction does not inherit the old fact's audio citation, since
+that recording may contradict the corrected text.
 
 The primary [Zhang et al. LightMem paper](https://arxiv.org/abs/2604.07798) uses user-specific mid-term episodes and de-identified, user-agnostic long-term knowledge. Kindred adapts the retrieval design to private, person-specific facts; its `facts` table is **not** the paper's de-identified LTM. [Fang et al. LightMem](https://arxiv.org/abs/2510.18866) motivates filtering, topic segments, and dock-time updates; [MemGPT](https://arxiv.org/abs/2310.08560) motivates bounded working memory and paging.

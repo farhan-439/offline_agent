@@ -66,7 +66,7 @@ in-memory database per run so docking and extraction variance are included. A re
 as a correct answer even if it contains the expected keywords; "evidence" means the cited clips
 include every expected utterance id.
 
-### Full matrix (9 runs: 3 modes × 3 repetitions)
+### Real-model retrieval matrix
 
 | mode | answer | evidence | both | refusals | median ms |
 |---|---|---|---|---|---|
@@ -74,34 +74,34 @@ include every expected utterance id.
 | hybrid | 27/30 | 23/30 | 23/30 | 3 | 5,838 |
 | hybrid-rerank | 24/30 | 22/30 | 22/30 | 3 | 6,113 |
 
+The matrix predates the review fixes to action confirmation, core-card evidence and photo
+reinspection, and the empty-answer fallback. Its JSON was removed after summarization, so rerun
+`npm run compare -- --repeats=3` to reproduce per-question rows.
+
 **Read this honestly:** on these ten questions, keyword retrieval is as good as or better than
 hybrid, and the Bonsai rerank costs ~2× latency without adding accuracy. The 8-document embedding
-probe (keyword 3/10 vs Bonsai 8/10) does **not** transfer to app-level accuracy on this set. Six
-runs refused with the evidence already in the prompt, and the compound Sam/Lily question failed in
-four of nine runs.
+probe (keyword 3/10 vs Bonsai 8/10) does **not** transfer to app-level accuracy on this set.
 
 ### After the empty-answer fix (targeted check)
 
-The full matrix above ran **before** the `final_answer` fallback landed. Four previously failing
-questions were re-run once per mode on the fixed code:
+Four previously failing questions were re-run once per mode on the fixed code:
 
 | mode | evidence correct | refusals | compound answer |
 |---|---|---|---|
 | hybrid | 3/4 | 0 | correct: Sunday noon **and** the peanut allergy |
 | hybrid-rerank | 2/4 | 0 | wrong: mentions lisinopril instead of the allergy |
 
-So the fallback removes the refusals in both modes. The rerank still drops the allergy page on the
-compound question in this sample; `hybrid` handled it. The garden question now answers correctly but
-cites the raw porch utterances rather than the promise fact, so its evidence check still fails.
-Latencies from this check were inflated by a warm GPU and are deliberately not reported.
-
-A full post-fix re-measurement of all three modes is the first job for the next agent
-(`npm run compare -- --repeats=3` + `npm run summarize`), because the 9-run table above predates the
-fallback.
+The fallback removes the refusals in both modes. The rerank still drops the allergy page on the
+compound question in this sample; `hybrid` handled it. Latencies from that check were inflated by a
+warm GPU and are not reported. A full post-fix re-measurement of all three modes remains the first
+job for the next agent.
 
 How to read it: the keyword answer check is lenient (a fluent sentence often contains the words),
 so **evidence accuracy is the honest signal**. Dock takes ~40 s per run (3 sessions, 3 extraction
 calls, 6 core-card calls, 20 embeddings) and dominates the total.
+On this fixture, hybrid retrieval did not improve strict evidence accuracy over BM25 and roughly
+doubled median answer latency. The rerank mode scored slightly worse. Do not pitch an app-level
+hybrid win from this matrix; the 8-memory vector probe is a different, smaller experiment.
 
 ## Known limitations and open failures
 
@@ -114,6 +114,9 @@ calls, 6 core-card calls, 20 embeddings) and dominates the total.
   usually with a slow multi-step path.
 - Keyword answer scoring flatters every mode; only the evidence column should be quoted as accuracy.
 - The 8-memory embedding probe (keyword 3/10 vs Bonsai 8/10) remains a probe, not app accuracy.
+- Photo ingestion with the real 4B model extracted a chart caption, but its initial observations
+  omitted a model label's position. The review fix reopens the original image for an explicit
+  photo question; a real retest answered the 0.5 GB label as “Qwen3 0.6B” and returned the photo.
 
 ## Next
 

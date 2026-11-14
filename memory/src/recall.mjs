@@ -7,8 +7,10 @@ import { search, hybridSearch, readEpisode, evidenceClips, evidencePhotos } from
 import { resolveWhen } from './temporal.mjs';
 import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
+import { now, parse } from './db.mjs';
+import { askPhoto } from './photos.mjs';
+import { evidenceInputs } from './inputs.mjs';
 import { bumpUsage } from './memories.mjs';
-import { now } from './db.mjs';
 
 export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
 export const MAX_STEPS = 4;
@@ -83,7 +85,7 @@ const ANSWER_SCHEMA = { type: 'object', additionalProperties: false, required: [
   answer: { type: 'string' }, cite: { type: 'array', maxItems: 4, items: { type: 'string' } },
 } };
 
-const SYSTEM = `You are Kindred, a private offline memory for the owner. You answer questions about the people in their life using ONLY memory pages.
+const SYSTEM = `You are Kindred, a private offline memory for the owner. You answer questions about the people in their life using ONLY memory pages. Pages marked N are exact text inputs written by the owner; cite them just like other pages.
 Each step, return exactly one action as JSON:
 - {"action":"search","query":"keywords","person":"name or null",...} to load more memory from disk.
 - {"action":"open_episode","episode":"E7",...} to read the exact words of a conversation.
@@ -96,9 +98,10 @@ Rules: answer in one or two short spoken sentences, mention who said it and when
  * checks fail even though the model read the right memory.
  */
 export function coreMemoryPages(db) {
-  const people = db.prepare('SELECT id, name, relation, core, is_owner, last_seen FROM people ORDER BY is_owner DESC, last_seen DESC NULLS LAST LIMIT 12').all();
+  const people = db.prepare('SELECT id, name, relation, core, core_fact_ids, is_owner, last_seen FROM people ORDER BY is_owner DESC, last_seen DESC NULLS LAST LIMIT 12').all();
   return people.map((p) => {
-    const facts = db.prepare("SELECT evidence FROM facts WHERE person_id = ? AND status = 'active' ORDER BY observed_at DESC LIMIT 4").all(p.id);
+    const ids = parse(p.core_fact_ids, []).filter(Number.isInteger);
+    const facts = ids.flatMap((id) => db.prepare("SELECT evidence FROM facts WHERE rowid = ? AND person_id = ? AND status = 'active'").all(id, p.id));
     return {
       ref: `P:${p.id}`, layer: 'core', personId: p.id, when: p.last_seen,
       text: `${p.name}${p.relation ? ` (${p.relation})` : ''}${p.core ? `: ${p.core}` : ''}`,
@@ -127,7 +130,35 @@ function temporalGrounded(answer, clips) {
   }));
 }
 
+// For a cooking question, an allergy stated in the cited conversation must not be
+// replaced by an unrelated medication warning. This guards a real 4B failure on
+// the Sam/Lily fixture: the model cited Lily's peanut allergy but answered with
+// Dr. Patel's potassium advice instead.
+export function missedFoodAllergy(question, answer, clips) {
+  if (!/\b(cook|cooking|food|meal|eat|eating|serve|serving)\b/i.test(question)) return null;
+  for (const clip of clips) {
+    const match = String(clip.translation || clip.text || '').match(/\ballerg(?:ic|y)\s+to\s+([a-z][a-z -]*?)(?:[,.;]|\bso\b|$)/i);
+    if (!match) continue;
+    const allergen = match[1].trim().toLowerCase();
+    if (!allergen) continue;
+    const stem = allergen.replace(/s$/, '');
+    if (!answer.toLowerCase().includes(stem)) return allergen;
+  }
+  return null;
+}
+
 export async function ask(db, bonsai, question, { today = new Date().toISOString().slice(0, 10), onStep = () => {}, mode: forcedMode = null, persistTrace = true } = {}) {
+  // A question explicitly about the only stored photo can be answered from its pixels,
+  // even when the first-pass caption omitted the detail. With several photos, normal
+  // retrieval chooses a candidate or the user can specify a photo id via /ask-photo.
+  if (/\b(photo|picture|image|snapshot)\b/i.test(question) && typeof bonsai.vision === 'function') {
+    const photos = db.prepare('SELECT id FROM photos ORDER BY added_at DESC LIMIT 2').all();
+    if (photos.length === 1) {
+      const result = await askPhoto(db, bonsai, photos[0].id, question);
+      if (persistTrace) saveTrace(db, question, result);
+      return result;
+    }
+  }
   const resolved = await resolveMode(bonsai);
   const mode = forcedMode ?? resolved.mode;
   const pages = [];
@@ -209,9 +240,17 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       const citedPages = cites.map((r) => seen.get(r));
       const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
       const clips = evidenceClips(db, ids.slice(0, 4));
+      const inputs = evidenceInputs(db, cites);
       const photoIds = citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean);
       const photos = evidencePhotos(db, photoIds);
-      if (!temporalGrounded(out.answer, clips)) {
+      const missedAllergen = missedFoodAllergy(question, out.answer, clips);
+      if (missedAllergen) {
+        feedback = `Your answer missed a food allergy stated in the cited conversation: ${missedAllergen}. Answer that part from the cited words. Do not substitute medication advice for an allergy.`;
+        trace.push({ step, action: 'answer_rejected', reason: 'missed cited food allergy', cite: cites });
+        onStep(trace.at(-1));
+        continue;
+      }
+      if (!temporalGrounded(out.answer, [...clips, ...inputs.map((note) => ({ text: note.text, started_at: note.createdAt }))])) {
         feedback = 'Your previous date or weekday was not supported by the cited utterances. Search for the exact event and use its spoken date; do not use the recording date.';
         trace.push({ step, action: 'answer_rejected', reason: 'unsupported date', cite: cites });
         onStep(trace.at(-1));
@@ -220,7 +259,8 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
       bumpUsage(db, cites);
-      const result = { answer: out.answer, cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
+      const result = { answer: out.answer, cites, clips, photos, inputs, trace,
+        grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
     } else {
@@ -243,9 +283,11 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
         const clips = evidenceClips(db, ids.slice(0, 4));
         const photos = evidencePhotos(db, citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean));
+        const inputs = evidenceInputs(db, cites);
         trace.push({ step: 'fallback', action: 'answer', cite: cites });
         bumpUsage(db, cites);
-        const result = { answer: out.answer.trim(), cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
+        const result = { answer: out.answer.trim(), cites, clips, photos, inputs, trace,
+          grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
         if (persistTrace) saveTrace(db, question, result);
         return result;
       }
