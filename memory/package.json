@@ -1,0 +1,14 @@
+{
+  "name": "kindred-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kindred memory engine: Bonsai-driven layered people memory with paged recall",
+  "engines": { "node": ">=24" },
+  "bin": { "kindred": "src/cli.mjs" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs",
+    "demo": "node --disable-warning=ExperimentalWarning src/cli.mjs demo",
+    "kindred": "node --disable-warning=ExperimentalWarning src/cli.mjs"
+  }
+}

@@ -1,0 +1,10 @@
+{"type":"session_start","session":"d1-clinic","startedAt":"2026-11-10T14:30:00Z","place":"Dr. Patel's clinic"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0001","speaker":"S1","start":0.0,"end":3.5,"text":"Good afternoon, I'm Doctor Patel. Let's look at your blood pressure numbers.","audio":"data/audio/d1-clinic.wav"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0002","speaker":"S1","start":3.8,"end":10.2,"text":"They're still a little high, so I'm raising your lisinopril from five to ten milligrams, once every morning.","audio":"data/audio/d1-clinic.wav"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0003","speaker":"S0","start":10.5,"end":12.4,"text":"Should I still take it with food?","audio":"data/audio/d1-clinic.wav"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0004","speaker":"S1","start":12.7,"end":17.9,"text":"With or without food is fine, but avoid potassium supplements. And skip the grapefruit juice.","audio":"data/audio/d1-clinic.wav"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0005","speaker":"S1","start":18.2,"end":22.6,"text":"I want to see you again on December third, and bring your blood pressure log.","audio":"data/audio/d1-clinic.wav"}
+{"type":"utterance","session":"d1-clinic","id":"d1-clinic#0006","speaker":"S0","start":22.9,"end":24.0,"text":"December third. Got it.","audio":"data/audio/d1-clinic.wav"}
+{"type":"speaker","session":"d1-clinic","speaker":"S0","voiceprint":[0.95,0.03,0.06,0.02,0.15,0.01,0.1,0.03],"seconds":3.0,"final":true}
+{"type":"speaker","session":"d1-clinic","speaker":"S1","voiceprint":[0.03,0.06,0.97,0.11,0.02,0.04,0.01,0.19],"seconds":19.8,"final":true}
+{"type":"session_end","session":"d1-clinic","endedAt":"2026-11-10T14:31:00Z"}

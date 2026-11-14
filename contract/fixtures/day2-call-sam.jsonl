@@ -1,0 +1,9 @@
+{"type":"session_start","session":"d2-call","startedAt":"2026-11-11T18:05:00Z","place":"phone call on speaker"}
+{"type":"utterance","session":"d2-call","id":"d2-call#0001","speaker":"S1","start":0.0,"end":3.0,"text":"Hey Mom, it's Sam. How was the doctor?","audio":"data/audio/d2-call.wav"}
+{"type":"utterance","session":"d2-call","id":"d2-call#0002","speaker":"S0","start":3.3,"end":6.1,"text":"Fine, he bumped up my blood pressure pill.","audio":"data/audio/d2-call.wav"}
+{"type":"utterance","session":"d2-call","id":"d2-call#0003","speaker":"S1","start":6.4,"end":12.2,"text":"Okay. We're coming Sunday for lunch, around noon. Lily wants to show you her science project.","audio":"data/audio/d2-call.wav"}
+{"type":"utterance","session":"d2-call","id":"d2-call#0004","speaker":"S1","start":12.5,"end":16.0,"text":"And remember, Lily is allergic to peanuts, so no peanut cookies this time.","audio":"data/audio/d2-call.wav"}
+{"type":"utterance","session":"d2-call","id":"d2-call#0005","speaker":"S0","start":16.3,"end":18.0,"text":"No peanuts. Sunday at noon.","audio":"data/audio/d2-call.wav"}
+{"type":"speaker","session":"d2-call","speaker":"S0","voiceprint":[0.96,0.04,0.03,0.02,0.13,0.02,0.09,0.01],"seconds":4.5,"final":true}
+{"type":"speaker","session":"d2-call","speaker":"S1","voiceprint":[0.02,0.07,0.1,0.97,0.05,0.03,0.16,0.02],"seconds":12.3,"final":true}
+{"type":"session_end","session":"d2-call","endedAt":"2026-11-11T18:05:40Z"}

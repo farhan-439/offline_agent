@@ -1,0 +1,12 @@
+node_modules/
+.build/
+.swiftpm/
+*.xcodeproj/
+data/
+*.sqlite
+*.sqlite-*
+*.wav
+*.m4a
+models/
+.env
+.DS_Store

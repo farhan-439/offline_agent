@@ -1,0 +1,12 @@
+{"type":"session_start","session":"d1-porch","startedAt":"2026-11-10T09:14:00Z","place":"front porch"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0001","speaker":"S0","start":0.0,"end":2.1,"text":"Morning! Oh hi, how are you doing?","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0002","speaker":"S1","start":2.4,"end":6.0,"text":"Hi, it's Maya from next door. I'm alright, a bit nervous honestly.","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0003","speaker":"S1","start":6.2,"end":11.5,"text":"My knee surgery got moved up to this Friday at Mercy Hospital.","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0004","speaker":"S0","start":11.8,"end":13.0,"text":"Oh no, is there anything I can do?","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0005","speaker":"S1","start":13.3,"end":19.0,"text":"Could you water my tomato plants while I'm away? The spare key is under the blue pot.","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0006","speaker":"S0","start":19.2,"end":21.0,"text":"Of course, I'll do it every evening.","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0007","speaker":"S1","start":21.3,"end":25.8,"text":"Thank you. My daughter Priya is driving down from Boston to stay with me.","audio":"data/audio/d1-porch.wav"}
+{"type":"utterance","session":"d1-porch","id":"d1-porch#0008","speaker":"S1","start":26.0,"end":27.0,"text":"Um, yeah.","audio":"data/audio/d1-porch.wav"}
+{"type":"speaker","session":"d1-porch","speaker":"S0","voiceprint":[0.97,0.05,0.02,0.01,0.12,0.03,0.08,0.02],"seconds":5.1,"final":true}
+{"type":"speaker","session":"d1-porch","speaker":"S1","voiceprint":[0.04,0.96,0.08,0.03,0.02,0.18,0.05,0.04],"seconds":21.5,"final":true}
+{"type":"session_end","session":"d1-porch","endedAt":"2026-11-10T09:15:10Z"}

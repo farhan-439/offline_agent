@@ -1,0 +1,3 @@
+{"type":"session_start","session":"d3-live","startedAt":"2026-11-13T17:40:00Z","place":"sidewalk"}
+{"type":"speaker","session":"d3-live","speaker":"S1","voiceprint":[0.06,0.94,0.1,0.02,0.04,0.2,0.03,0.06],"seconds":3.2,"final":false}
+{"type":"utterance","session":"d3-live","id":"d3-live#0001","speaker":"S1","start":0.0,"end":3.2,"text":"Hello! Thank you so much for looking after my garden.","audio":"data/audio/d3-live.wav"}
