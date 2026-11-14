@@ -7,6 +7,7 @@ import { search, hybridSearch, readEpisode, evidenceClips, evidencePhotos } from
 import { resolveWhen } from './temporal.mjs';
 import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
+import { bumpUsage } from './memories.mjs';
 import { now } from './db.mjs';
 
 export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
@@ -218,6 +219,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       }
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
+      bumpUsage(db, cites);
       const result = { answer: out.answer, cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
@@ -242,6 +244,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         const clips = evidenceClips(db, ids.slice(0, 4));
         const photos = evidencePhotos(db, citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean));
         trace.push({ step: 'fallback', action: 'answer', cite: cites });
+        bumpUsage(db, cites);
         const result = { answer: out.answer.trim(), cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
         if (persistTrace) saveTrace(db, question, result);
         return result;

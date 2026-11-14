@@ -17,6 +17,7 @@ import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
 import { ingestPhoto } from './photos.mjs';
+import { listMemories, rememberMemory } from './memories.mjs';
 import { runAction } from './actions.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
@@ -65,6 +66,17 @@ async function main() {
       break;
     }
     case 'action': log(JSON.stringify(await runAction(db, bonsai, parse(args.join(' '))), null, 2)); break;
+    case 'memories': {
+      const m = listMemories(db, { q: args.join(' ') || null });
+      for (const x of m) log(`${x.ref} · ${x.person?.name ?? '?'} · ${x.kind}${x.origin === 'user' ? ' · you' : ''} · used ${x.uses}×\n    ${x.text}`);
+      log(`${m.length} memories`);
+      break;
+    }
+    case 'remember': {
+      const m = await rememberMemory(db, bonsai, { text: args.join(' ') });
+      log(`remembered ${m.ref}: ${m.text}${m.person ? ` (${m.person.name})` : ''}`);
+      break;
+    }
     case 'who': log(JSON.stringify(await whoIsThis(db, bonsai, parse(args[0])), null, 2)); break;
     case 'people': printPeople(db); break;
     case 'demo': {

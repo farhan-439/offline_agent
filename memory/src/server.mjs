@@ -12,6 +12,7 @@ import { whoIsThis } from './whisper.mjs';
 import { resolveMode, describeMode } from './capabilities.mjs';
 import { ingestPhoto } from './photos.mjs';
 import { runAction, pendingActions } from './actions.mjs';
+import { listMemories, rememberMemory } from './memories.mjs';
 
 async function bodyOf(req) {
   let text = '';
@@ -51,6 +52,15 @@ export function createHandler(db, bonsai) {
           requestedMode: mode.requested, degraded: mode.degraded, embeddings: mode.caps, detail: describeMode(mode) });
       }
       if (req.method === 'GET' && url.pathname === '/people') return send(200, peopleGraph(db));
+      if (req.method === 'GET' && url.pathname === '/memories') {
+        const memories = listMemories(db, {
+          q: url.searchParams.get('q'),
+          person: url.searchParams.get('person'),
+          status: url.searchParams.get('status') ?? 'active',
+          limit: Number(url.searchParams.get('limit') ?? 100),
+        });
+        return send(200, { memories });
+      }
       if (req.method === 'GET' && url.pathname === '/traces') {
         const limit = Math.min(100, Number(url.searchParams.get('limit') ?? 20));
         const traces = db.prepare('SELECT id, question, answer, mode, grounded, trace, created_at FROM recall_traces ORDER BY id DESC LIMIT ?').all(limit)
@@ -79,6 +89,7 @@ export function createHandler(db, bonsai) {
         return send(200, await serial(() => ingestPhoto(db, bonsai, input)));
       }
       if (url.pathname === '/action') return send(200, await serial(() => runAction(db, bonsai, input, { confirm: input.confirm === true })));
+      if (url.pathname === '/memory') return send(200, { memory: await serial(() => rememberMemory(db, bonsai, input)) });
       return send(404, { error: 'unknown route' });
     } catch (error) {
       return send(500, { error: error.message });

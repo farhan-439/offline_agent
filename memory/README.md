@@ -74,6 +74,8 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 |---|---|
 | `GET /health` | active retrieval mode, embedding capability, model |
 | `GET /people` | people, relations, fact counts, voice samples |
+| `GET /memories` | memory records for the Ledger: `q`, `person`, `status`, `limit`; each with source quote, origin (user/extracted), uses, last used |
+| `POST /memory` | explicit save: `{"text":"…","person":"Me","kind":"preference"}` (origin `user`) |
 | `GET /traces?limit=20` | stored recall traces: plan, pages loaded, evictions, citations |
 | `GET /actions` | pending (unconfirmed) actions |
 | `POST /ingest-photo` | `{"file":"/local/path.jpg","note":"...","takenAt":"...","people":["Maya"]}` |
@@ -88,6 +90,10 @@ the original photo in `photos[]` as evidence. `docs/PHOTO_HANDOFF.md` holds the 
 for the capture side; `docs/CONTRACT.md` is unchanged.
 
 ## Local actions
+
+`kindred memories [query]` lists records for the Ledger and `kindred remember <text>` saves one
+explicitly. `docs/UI_BACKEND_CONTRACT.md` is the adapter contract for the UI (real shapes, and the
+gaps it must not fake: no token streaming, no approval queue, no scope enforcement).
 
 Bonsai can call `search_memory`, `open_episode`, `answer_memory`, `play_original_clip`,
 `set_reminder`, `correct_memory` and `forget_memory`. Only `play_original_clip` is read-only. The

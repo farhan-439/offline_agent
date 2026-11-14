@@ -35,6 +35,10 @@ Written 2026-11-14 for whoever picks this up next. Everything below is on the br
    `correct_memory`, `forget_memory` are two-phase (propose → confirm) and logged.
 7. **Demo-view data:** `GET /people`, `GET /traces`, `GET /actions`; `/ask` returns the trace,
    clips and photos.
+8. **Ledger data + explicit save:** `GET /memories` returns each fact with its statement, source
+   quote, `origin` (`user` vs `extracted`), `scope`, real `uses`/`lastUsed` counters and status;
+   `POST /memory` saves a user-authored memory. `docs/UI_BACKEND_CONTRACT.md` is the adapter
+   contract for the UI agent (real shapes plus the gaps it must not fake).
 
 ## The benchmark (must be finished)
 
@@ -75,8 +79,8 @@ Then paste the result into `docs/MEMORY_STATUS.md`.
 
 ## Remaining work
 
-1. **Finish the matrix**, run `npm run summarize`, and paste the table into the
-   `<!--MATRIX-->` slot in `docs/MEMORY_STATUS.md`.
+1. **Re-measure after the empty-answer fix** (the 9-run table predates it), run
+   `npm run summarize`, and update the measurement section in `docs/MEMORY_STATUS.md`.
 2. **Real vision smoke test** (not yet run with the real model):
    ```sh
    cd memory
