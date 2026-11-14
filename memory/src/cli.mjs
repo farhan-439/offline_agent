@@ -16,6 +16,8 @@ import { enrollOwner } from './identity.mjs';
 import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
+import { ingestPhoto } from './photos.mjs';
+import { runAction } from './actions.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const [cmd, ...args] = process.argv.slice(2);
@@ -42,16 +44,27 @@ async function main() {
     case 'enroll-me': log(`owner voice enrolled as ${enrollOwner(db, parse(args[0]))}`); break;
     case 'dock': {
       const r = await dock(db, bonsai, { onEvent: (e) => log('  ·', JSON.stringify(e)) });
-      log(`docked ${r.sessions.length} sessions → ${r.episodes} episodes, ${r.facts} facts (${r.dropped} filler lines dropped, ${r.ungrounded} ungrounded facts rejected)`);
+      log(`docked ${r.sessions.length} sessions → ${r.episodes} episodes, ${r.facts} facts (${r.dropped} filler lines dropped, ${r.ungrounded} ungrounded facts rejected, ${r.duplicates} duplicates skipped, ${r.superseded} superseded, ${r.rejected_names.length} invalid names rejected) [${r.mode}]`);
       log(`Bonsai calls: ${bonsai.calls.length}, ${bonsai.calls.reduce((s, c) => s + c.ms, 0)} ms`);
       break;
     }
     case 'ask': {
-      const r = await ask(db, bonsai, args.join(' '), { onStep: (s) => log('  ·', JSON.stringify(s)) });
-      log(`\n${r.answer}`);
+      const modeArg = args.find((a) => a.startsWith('--mode='))?.split('=')[1];
+      const question = args.filter((a) => !a.startsWith('--mode=')).join(' ');
+      const r = await ask(db, bonsai, question, { mode: modeArg ?? null, onStep: (s) => log('  ·', JSON.stringify(s)) });
+      log(`[${r.mode}]\n${r.answer}`);
       for (const c of r.clips) log(`  ↳ ${c.speaker}, ${c.started_at?.slice(0, 10)}: "${c.text}"  (${c.audio}#t=${c.start},${c.end})`);
+      for (const p of r.photos ?? []) log(`  ▣ photo ${p.id}: ${p.caption}`);
+      if (r.pendingAction) log(`  ! pending action ${r.pendingAction.id}: ${r.pendingAction.summary}`);
       break;
     }
+    case 'photo': {
+      const r = await ingestPhoto(db, bonsai, { file: args[0], note: args.slice(1).join(' ') || null });
+      log(`photo ${r.photo.id}: ${r.photo.caption} (${r.observations.length} observations, mode ${r.mode}${r.duplicate ? ', duplicate' : ''})`);
+      for (const o of r.observations) log(`  · [${o.kind}] ${o.text}`);
+      break;
+    }
+    case 'action': log(JSON.stringify(await runAction(db, bonsai, parse(args.join(' '))), null, 2)); break;
     case 'who': log(JSON.stringify(await whoIsThis(db, bonsai, parse(args[0])), null, 2)); break;
     case 'people': printPeople(db); break;
     case 'demo': {
@@ -74,7 +87,7 @@ async function main() {
       break;
     }
     default:
-      log('usage: kindred <ingest|enroll-me|dock|ask|who|people|demo> ...  (see src/cli.mjs)');
+      log('usage: kindred <ingest|enroll-me|dock|ask|who|people|photo|action|demo> ...  (see src/cli.mjs)');
       process.exitCode = 1;
   }
 }

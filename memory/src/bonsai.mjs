@@ -16,6 +16,7 @@ export class Bonsai {
   } = {}) {
     Object.assign(this, { url: url.replace(/\/$/, ''), model, fetchFn, timeoutMs });
     this.calls = []; // trace for the UI / debugging: what Bonsai was asked and how long it took
+    this.caps = null; // cached /embeddings capability probe (see capabilities.mjs)
   }
 
   async health() {
@@ -23,6 +24,23 @@ export class Bonsai {
     if (!res.ok) throw new Error(`Bonsai server answered ${res.status}`);
     const ids = (await res.json()).data?.map((m) => m.id) ?? [];
     return { ok: ids.includes(this.model), models: ids };
+  }
+
+  /**
+   * Is `/v1/embeddings` actually usable? Probed once with a real request and cached.
+   * A server started without `--embeddings` answers 501; the caller then runs BM25-only.
+   */
+  async capabilities({ refresh = false } = {}) {
+    if (this.caps && !refresh) return this.caps;
+    const forced = (process.env.KINDRED_EMBED ?? '').trim();
+    if (forced === '0') return (this.caps = { embeddings: false, dim: null, reason: 'KINDRED_EMBED=0' });
+    try {
+      const [v] = await this.embed(['kindred capability probe']);
+      this.caps = { embeddings: true, dim: v.length, reason: null };
+    } catch (e) {
+      this.caps = { embeddings: false, dim: null, reason: e.message };
+    }
+    return this.caps;
   }
 
   /** Bonsai's own pooled hidden states, served by llama.cpp with --embeddings. */
@@ -54,6 +72,18 @@ export class Bonsai {
       { type: 'function', function: { name: 'answer_memory', description: 'Give a short answer supported by loaded memory refs', parameters: {
         type: 'object', properties: { answer: { type: 'string' }, cite: { type: 'array', items: { type: 'string' } } }, required: ['answer', 'cite'], additionalProperties: false,
       } } },
+      { type: 'function', function: { name: 'play_original_clip', description: 'Play the original recording behind a cited memory ref', parameters: {
+        type: 'object', properties: { ref: { type: 'string' } }, required: ['ref'], additionalProperties: false,
+      } } },
+      { type: 'function', function: { name: 'set_reminder', description: 'Propose a reminder (needs the user to confirm)', parameters: {
+        type: 'object', properties: { text: { type: 'string' }, due: { type: ['string', 'null'] }, person: { type: ['string', 'null'] } }, required: ['text'], additionalProperties: false,
+      } } },
+      { type: 'function', function: { name: 'correct_memory', description: 'Propose correcting a memory (needs the user to confirm)', parameters: {
+        type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' } }, required: ['ref', 'text'], additionalProperties: false,
+      } } },
+      { type: 'function', function: { name: 'forget_memory', description: 'Propose forgetting a memory or a person (needs the user to confirm)', parameters: {
+        type: 'object', properties: { ref: { type: ['string', 'null'] }, person: { type: ['string', 'null'] }, query: { type: ['string', 'null'] } }, additionalProperties: false,
+      } } },
     ];
     const t0 = Date.now();
     const res = await this.fetchFn(`${this.url}/chat/completions`, {
@@ -75,7 +105,44 @@ export class Bonsai {
       return { action: 'open_episode', episode: args.episode };
     if (call.function.name === 'answer_memory' && typeof args.answer === 'string')
       return { action: 'answer', answer: args.answer, cite: Array.isArray(args.cite) ? args.cite : [] };
+    if (['play_original_clip', 'set_reminder', 'correct_memory', 'forget_memory'].includes(call.function.name))
+      return { action: 'tool', tool: call.function.name, args };
     return null;
+  }
+
+  /**
+   * One image plus an instruction → JSON matching `schema`, using the model's vision projector.
+   * `image` is a data URI so this stays local (no file:// or network fetch by llama.cpp).
+   */
+  async vision({ name = 'vision', system, user, image, schema, maxTokens = 700, temperature = 0.2 }) {
+    const t0 = Date.now();
+    const res = await this.fetchFn(`${this.url}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(this.timeoutMs),
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: [
+            { type: 'text', text: user },
+            { type: 'image_url', image_url: { url: image } },
+          ] },
+        ],
+        max_tokens: maxTokens,
+        ...SAMPLING,
+        temperature,
+        response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } },
+        chat_template_kwargs: { enable_thinking: false },
+      }),
+    });
+    if (!res.ok) throw new Error(`Bonsai ${name} failed: HTTP ${res.status} ${await res.text().catch(() => '')}`);
+    const body = await res.json();
+    const text = body.choices?.[0]?.message?.content ?? '';
+    const out = parseJson(text);
+    this.calls.push({ name, ms: Date.now() - t0, kind: 'vision', tokens: body.usage });
+    if (out === undefined) throw new Error(`Bonsai ${name} returned non-JSON: ${text.slice(0, 200)}`);
+    return out;
   }
 
   /** Ask for one JSON object matching `schema`. `name` labels the call in traces. */
