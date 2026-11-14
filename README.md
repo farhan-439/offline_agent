@@ -34,6 +34,8 @@
 
 Kindred is meant to remember ordinary conversations, family and doctor calls, appointments, promises, and directions. For travel, the planned Argmax capture flow can pair speech in the original language with a translation. Memory keeps both and cites the original audio; Bonsai can answer a later question such as *"How do we get back to the station?"* and Argmax can speak the answer. The live translation flow is being built in `capture/`.
 
+**Planned photo memory:** add a photo locally, let Bonsai vision extract searchable details with the photo as evidence, then ask about it later. This is a product plan, not an implemented upload or retrieval path. See [current status and build plan](docs/MEMORY_STATUS.md).
+
 ### Why not just use Omi?
 
 | | Omi | Kindred |
@@ -124,20 +126,9 @@ We split along the contract, so each person can build and demo their half alone 
 | Sun 10 am | **integration, Wi-Fi-off run, record demo video** | ← same |
 | Sun 12 pm | **submit** | |
 
-## 6. Status (Sat 11/14, afternoon)
+## 6. Status
 
-**Working**
-- Contract + 4 fixture sessions (porch chat with Maya, clinic visit with Dr. Patel, call with Sam, live re-encounter with Maya).
-- `memory/`: ingest, dock (stage 1 + Bonsai extraction + grounding + voice binding + core memory), two-stage retrieval, MemGPT-style recall with verified citations, live `who` → whisper. **7/7 tests pass** with a scripted test model (proves plumbing, not accuracy).
-- **Real Bonsai 4B run of the full demo: ~36 s on this Mac.** "What did the doctor change about my medication?" → *"The doctor increased your lisinopril dosage from five to ten milligrams"*, citing Dr. Patel's exact utterance.
-- `capture/`: Swift package builds (`process` = WhisperKit + SpeakerKit → contract JSONL; `speak` = TTSKit). Not yet run on real audio.
-
-**Not working yet (seen on real Bonsai 4B; results vary run to run)**
-- Bonsai sometimes doesn't name the speaker who introduces themself (Sam was put in `mentioned`; once named a speaker "?"). When that happens their voice isn't enrolled, so the live whisper for Maya failed on one run and worked on another.
-- Owner core memory invented details ("your partner", "taken with food").
-- Recall answered "When is Sam coming?" with the call date instead of "Sunday around noon", and missed the peanut allergy.
-- No real voiceprints yet (fixtures use fake 8-dim vectors) — needs Argmax Pro.
-- No live mic capture, no UI.
+See [current status and build plan](docs/MEMORY_STATUS.md) for completed code, measured results, remaining risks, and planned features. The working local model is Bonsai 2 4B. The photo memory path and additional action tools are planned, not built.
 
 ## 7. Running it
 
