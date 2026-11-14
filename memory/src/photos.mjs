@@ -35,6 +35,10 @@ Return JSON:
 - observations: up to eight things that are clearly visible. kind is person, place, object, text, activity, pet, document or other. text is a short, concrete phrase ("blue birthday cake", "sign says Main Street Pharmacy"). confidence is 0 to 1.
 Only describe what you can see. Never guess a person's name unless a name is written in the image; say "a woman" instead. No speculation, no feelings, no invented dates.`;
 
+const ANSWER_SCHEMA = { type: 'object', additionalProperties: false, required: ['answer', 'visible'], properties: {
+  answer: { type: 'string', maxLength: 300 }, visible: { type: 'boolean' },
+} };
+
 function mimeOf(file) {
   const ext = path.extname(file).toLowerCase();
   return MIME[ext] ?? 'application/octet-stream';
@@ -116,4 +120,20 @@ export function observationsForRefs(db, refs) {
 
 export function photoFor(db, id) {
   return db.prepare('SELECT id, path, mime, taken_at, added_at, caption FROM photos WHERE id = ?').get(id) ?? null;
+}
+
+/** Reinspect stored pixels when the initial observations did not capture a detail. */
+export async function askPhoto(db, bonsai, id, question) {
+  const photo = photoFor(db, id);
+  if (!photo) throw new Error(`photo not found: ${id}`);
+  const file = path.resolve(ROOT, photo.path);
+  if (!file.startsWith(`${PHOTO_DIR}${path.sep}`) || !existsSync(file)) throw new Error('stored photo is unavailable');
+  const dataUri = `data:${photo.mime};base64,${readFileSync(file).toString('base64')}`;
+  const out = await bonsai.vision({ name: 'photo_answer', schema: ANSWER_SCHEMA,
+    system: 'Answer the question using only what is visible in this photo. Read labels carefully. If the requested detail is not visible or legible, say you cannot tell from this photo and set visible to false. Do not use outside knowledge or guess.',
+    user: question, image: dataUri, maxTokens: 300 });
+  const visible = out.visible === true && !!String(out.answer ?? '').trim();
+  return { answer: visible ? out.answer.trim() : 'I cannot tell from this photo.',
+    cites: visible ? [`PHOTO:${id}`] : [], clips: [], photos: [photo], grounded: visible,
+    trace: [{ step: 0, action: 'photo_vision', photoId: id, visible }], mode: 'vision' };
 }

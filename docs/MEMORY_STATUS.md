@@ -66,20 +66,25 @@ in-memory database per run so docking and extraction variance are included. A re
 as a correct answer even if it contains the expected keywords; "evidence" means the cited clips
 include every expected utterance id.
 
-The final table is generated from `memory/eval/results/compare-<timestamp>.json` with
-`npm run summarize` after the 3×3 matrix finishes; fill it in here. Interim from the run in
-progress: bm25 29/30 answer, 23/30 evidence (~3.0 s median); hybrid 18/20 answer, 16/20 evidence
-(~6.2 s median); hybrid-rerank pending. An earlier pre-fix matrix scored bm25 30/30 & 20/30,
-hybrid 28/30 & 25/30, hybrid-rerank 28/30 & 23/30 — superseded, do not quote as final.
+The completed 3×3 matrix on branch commit `0cd8651` produced this output from
+`npm run summarize` (2026-11-14). It predates the review fixes to action confirmation,
+core-card evidence, and photo reinspection. The generated JSON was removed from the working
+directory after summarization, so rerun `npm run compare -- --repeats=3` to reproduce per-question
+rows. An earlier pre-fix matrix is superseded and should not be quoted.
 
 ```
 mode            answer  evidence  both   refusals  median ms
-(replace with `npm run summarize` output)
+bm25            29/30   23/30     23/30  0         2796
+hybrid          27/30   23/30     23/30  3         5838
+hybrid-rerank   24/30   22/30     22/30  3         6113
 ```
 
 How to read it: the keyword answer check is lenient (a fluent sentence often contains the words),
 so **evidence accuracy is the honest signal**. Dock takes ~40 s per run (3 sessions, 3 extraction
 calls, 6 core-card calls, 20 embeddings) and dominates the total.
+On this fixture, hybrid retrieval did not improve strict evidence accuracy over BM25 and roughly
+doubled median answer latency. The rerank mode scored slightly worse. Do not pitch an app-level
+hybrid win from this matrix; the 8-memory vector probe is a different, smaller experiment.
 
 ## Known limitations and open failures
 
@@ -92,6 +97,9 @@ calls, 6 core-card calls, 20 embeddings) and dominates the total.
   usually with a slow multi-step path.
 - Keyword answer scoring flatters every mode; only the evidence column should be quoted as accuracy.
 - The 8-memory embedding probe (keyword 3/10 vs Bonsai 8/10) remains a probe, not app accuracy.
+- Photo ingestion with the real 4B model extracted a chart caption, but its initial observations
+  omitted a model label's position. The review fix reopens the original image for an explicit
+  photo question; a real retest answered the 0.5 GB label as “Qwen3 0.6B” and returned the photo.
 
 ## Next
 

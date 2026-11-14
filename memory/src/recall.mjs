@@ -8,6 +8,7 @@ import { resolveWhen } from './temporal.mjs';
 import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
 import { now, parse } from './db.mjs';
+import { askPhoto } from './photos.mjs';
 
 export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
 export const MAX_STEPS = 4;
@@ -123,7 +124,35 @@ function temporalGrounded(answer, clips) {
   }));
 }
 
+// For a cooking question, an allergy stated in the cited conversation must not be
+// replaced by an unrelated medication warning. This guards a real 4B failure on
+// the Sam/Lily fixture: the model cited Lily's peanut allergy but answered with
+// Dr. Patel's potassium advice instead.
+export function missedFoodAllergy(question, answer, clips) {
+  if (!/\b(cook|cooking|food|meal|eat|eating|serve|serving)\b/i.test(question)) return null;
+  for (const clip of clips) {
+    const match = String(clip.translation || clip.text || '').match(/\ballerg(?:ic|y)\s+to\s+([a-z][a-z -]*?)(?:[,.;]|\bso\b|$)/i);
+    if (!match) continue;
+    const allergen = match[1].trim().toLowerCase();
+    if (!allergen) continue;
+    const stem = allergen.replace(/s$/, '');
+    if (!answer.toLowerCase().includes(stem)) return allergen;
+  }
+  return null;
+}
+
 export async function ask(db, bonsai, question, { today = new Date().toISOString().slice(0, 10), onStep = () => {}, mode: forcedMode = null, persistTrace = true } = {}) {
+  // A question explicitly about the only stored photo can be answered from its pixels,
+  // even when the first-pass caption omitted the detail. With several photos, normal
+  // retrieval chooses a candidate or the user can specify a photo id via /ask-photo.
+  if (/\b(photo|picture|image|snapshot)\b/i.test(question) && typeof bonsai.vision === 'function') {
+    const photos = db.prepare('SELECT id FROM photos ORDER BY added_at DESC LIMIT 2').all();
+    if (photos.length === 1) {
+      const result = await askPhoto(db, bonsai, photos[0].id, question);
+      if (persistTrace) saveTrace(db, question, result);
+      return result;
+    }
+  }
   const resolved = await resolveMode(bonsai);
   const mode = forcedMode ?? resolved.mode;
   const pages = [];
@@ -207,6 +236,13 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       const clips = evidenceClips(db, ids.slice(0, 4));
       const photoIds = citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean);
       const photos = evidencePhotos(db, photoIds);
+      const missedAllergen = missedFoodAllergy(question, out.answer, clips);
+      if (missedAllergen) {
+        feedback = `Your answer missed a food allergy stated in the cited conversation: ${missedAllergen}. Answer that part from the cited words. Do not substitute medication advice for an allergy.`;
+        trace.push({ step, action: 'answer_rejected', reason: 'missed cited food allergy', cite: cites });
+        onStep(trace.at(-1));
+        continue;
+      }
       if (!temporalGrounded(out.answer, clips)) {
         feedback = 'Your previous date or weekday was not supported by the cited utterances. Search for the exact event and use its spoken date; do not use the recording date.';
         trace.push({ step, action: 'answer_rejected', reason: 'unsupported date', cite: cites });

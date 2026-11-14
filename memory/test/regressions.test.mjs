@@ -11,7 +11,7 @@ import { openDb } from '../src/db.mjs';
 import { ingestFile, ingestEvents, readSessionFile } from '../src/ingest.mjs';
 import { enrollOwner } from '../src/identity.mjs';
 import { dock } from '../src/dock.mjs';
-import { ask } from '../src/recall.mjs';
+import { ask, missedFoodAllergy } from '../src/recall.mjs';
 import { search, hybridSearch } from '../src/retrieve.mjs';
 import { indexMemories, memoryDocuments } from '../src/embeddings.mjs';
 import { ingestPhoto } from '../src/photos.mjs';
@@ -272,6 +272,17 @@ test('compound questions keep one retrieval hit per subquestion', async () => {
   assert.ok(r.clips.some((c) => c.id === 'd2-call#0004'));
 });
 
+test('cooking recall rejects medication advice that omits a cited food allergy', () => {
+  const question = 'When is Sam coming and is there anything I should not cook?';
+  const clips = [
+    { text: 'Lily is allergic to peanuts, so no peanut cookies this time.' },
+    { text: 'Avoid potassium supplements and grapefruit juice while taking lisinopril.' },
+  ];
+  assert.equal(missedFoodAllergy(question, 'Avoid potassium supplements and grapefruit juice.', clips), 'peanuts');
+  assert.equal(missedFoodAllergy(question, 'Lily is allergic to peanuts; do not make peanut cookies.', clips), null);
+  assert.equal(missedFoodAllergy('What did the doctor say to avoid with medicine?', 'Avoid potassium supplements.', clips), null);
+});
+
 // ---------- photo memory ----------
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
@@ -283,7 +294,8 @@ test('photo memory: vision observations are searchable and answers cite the orig
   writeFileSync(file, PNG);
   const bonsai = {
     model: 'fake',
-    async vision() {
+    async vision({ name }) {
+      if (name === 'photo_answer') return { answer: 'It was a blue birthday cake.', visible: true };
       return { caption: 'A blue birthday cake on a table', observations: [
         { kind: 'object', text: 'blue birthday cake', confidence: 0.9 },
         { kind: 'person', text: 'a woman smiling', confidence: 0.8 },

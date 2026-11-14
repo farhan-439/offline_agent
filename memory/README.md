@@ -77,6 +77,7 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 | `GET /traces?limit=20` | stored recall traces: plan, pages loaded, evictions, citations |
 | `GET /actions` | pending (unconfirmed) actions |
 | `POST /ingest-photo` | `{"file":"/local/path.jpg","note":"...","takenAt":"...","people":["Maya"]}` |
+| `POST /ask-photo` | `{"id":"ph_...","question":"What does the sign say?"}` reopens the stored image with Bonsai vision |
 | `POST /action` | `{"kind":"set_reminder",...}` proposes; `{"id":7,"confirm":true}` applies |
 
 ## Photo memory
@@ -85,7 +86,10 @@ A local image is copied into `data/photos/` (SHA-256 dedupe), Bonsai vision extr
 up to eight observations, empty or low-confidence observations are dropped, and the text is indexed
 with Bonsai embeddings and FTS5. `ask` can cite a photo observation (`O12`) and the result carries
 the original photo in `photos[]` as evidence. `docs/PHOTO_HANDOFF.md` holds the proposed image event
-for the capture side; `docs/CONTRACT.md` is unchanged.
+for the capture side; `docs/CONTRACT.md` is unchanged. For a question explicitly about the only
+stored photo, `ask` reinspects the original image so details omitted from the first-pass observations
+can still be answered. With multiple photos, use `/ask-photo` with an id when retrieval cannot
+identify which image the user means.
 
 ## Local actions
 

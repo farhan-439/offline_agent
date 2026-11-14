@@ -10,7 +10,7 @@ import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
 import { resolveMode, describeMode } from './capabilities.mjs';
-import { ingestPhoto } from './photos.mjs';
+import { ingestPhoto, askPhoto } from './photos.mjs';
 import { runAction, pendingActions } from './actions.mjs';
 
 async function bodyOf(req) {
@@ -73,6 +73,11 @@ export function createHandler(db, bonsai) {
       if (url.pathname === '/ask') {
         if (typeof input.question !== 'string' || !input.question.trim()) return send(400, { error: 'question required' });
         return send(200, await serial(() => ask(db, bonsai, input.question, input.mode ? { mode: input.mode } : {})));
+      }
+      if (url.pathname === '/ask-photo') {
+        if (typeof input.id !== 'string' || typeof input.question !== 'string' || !input.question.trim())
+          return send(400, { error: 'photo id and question required' });
+        return send(200, await serial(() => askPhoto(db, bonsai, input.id, input.question)));
       }
       if (url.pathname === '/ingest-photo' || url.pathname === '/photo') {
         if (typeof input.file !== 'string') return send(400, { error: 'file (local path) required' });
