@@ -74,8 +74,8 @@ Key mechanisms:
 - **LightMem-style pre-compression (stage 1, no LLM):** filler like "um, yeah" is dropped and the stream is cut into topic segments by silence gaps / size before Bonsai sees anything → fewer, smaller Bonsai calls.
 - **Grounded extraction:** every fact must cite utterance ids that exist in the segment, otherwise it is rejected. Small model + memory-loss users = no hallucinated memories.
 - **Voice ⇄ name binding:** when Bonsai reads "Hi, it's Maya from next door", the speaker cluster's voiceprint is enrolled to Maya. Next time that voice appears, she is recognised instantly without the LLM.
-- **Sleep-time consolidation:** at dock, Bonsai rewrites each touched person's core card and retires facts superseded by newer ones (old dose → new dose). Runs once per batch, not per query.
-- **MemGPT-style recall:** Bonsai sees core memory + a working context with a hard budget (2,400 chars). Each step it chooses `search` / `open_episode` / `answer`. Old pages are evicted when the budget overflows. Retrieval is two-stage: FTS5 BM25 over facts, episodes and utterances → rerank by relevance, recency and person match.
+- **Sleep-time consolidation:** at dock, Bonsai selects the most useful facts for each core card and flags older facts superseded by newer ones. The card is assembled from source facts to prevent new prose from inventing details.
+- **MemGPT-style recall:** Bonsai sees core memory + a working context with a hard budget (2,400 chars). It uses native tool calls to `search`, `open_episode`, or `answer`. Old pages are evicted when the budget overflows. Bonsai plans subqueries, makes embeddings for a vector + BM25 shortlist, then semantically selects up to six pages before paging begins.
 - **Citations are verified:** an answer may only cite pages it actually loaded. Cited pages map back to utterance ids → audio clips.
 - **Grammar-constrained output:** every Bonsai call sends a JSON schema to llama.cpp, so output is always parseable.
 

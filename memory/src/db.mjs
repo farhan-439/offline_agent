@@ -49,16 +49,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(summary);
 -- L2 · semantic facts, each grounded in utterance ids
 CREATE TABLE IF NOT EXISTS facts (
   rowid INTEGER PRIMARY KEY, person_id TEXT REFERENCES people(id), kind TEXT NOT NULL, text TEXT NOT NULL,
-  when_text TEXT, evidence TEXT NOT NULL, session TEXT, episode INTEGER, observed_at TEXT,
+  when_text TEXT, when_resolved TEXT, evidence TEXT NOT NULL, session TEXT, episode INTEGER, observed_at TEXT,
   status TEXT NOT NULL DEFAULT 'active', superseded_by INTEGER
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(text, person, kind);
+
+-- Bonsai-generated semantic index. A content hash makes re-indexing incremental.
+CREATE TABLE IF NOT EXISTS embeddings (
+  ref TEXT PRIMARY KEY, model TEXT NOT NULL, content_hash TEXT NOT NULL,
+  dim INTEGER NOT NULL, vector BLOB NOT NULL, updated_at TEXT NOT NULL
+);
 `;
 
 export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta.dirname, '../../data/kindred.sqlite')) {
   if (file !== ':memory:') mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
+  if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'when_resolved'))
+    db.exec('ALTER TABLE facts ADD COLUMN when_resolved TEXT');
   return db;
 }
 

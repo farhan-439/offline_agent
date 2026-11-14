@@ -2,6 +2,7 @@
 //   stage A (coarse): FTS5 BM25 over facts, episode summaries and raw utterances
 //   stage B (fine):   rerank by relevance + recency + person match, then cut to a token budget
 import { parse } from './db.mjs';
+import { nearestRefs } from './embeddings.mjs';
 
 const STOP = new Set('a an the and or but of to in on at for with about from by is are was were be been am do does did what when where who whom which how why that this these those i me my mine you your he she it they them his her their we our us said say says tell told remind there any some can could should would will just than then so if not no'.split(' '));
 
@@ -33,7 +34,7 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
     }
     for (const f of facts) items.push({
       ref: `F${f.rowid}`, layer: 'fact', personId: f.person_id,
-      text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}: ${f.text}`,
+      text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
       when: f.observed_at, evidence: parse(f.evidence, []), bm25: f.rank,
     });
   }
@@ -67,6 +68,42 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function pageByRef(db, ref) {
+  if (/^F\d+$/.test(ref)) {
+    const f = db.prepare(`SELECT f.*, p.name AS person FROM facts f LEFT JOIN people p ON p.id = f.person_id
+      WHERE f.rowid = ? AND f.status = 'active'`).get(Number(ref.slice(1)));
+    return f && { ref, layer: 'fact', personId: f.person_id,
+      text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
+      when: f.observed_at, evidence: parse(f.evidence, []) };
+  }
+  if (/^E\d+$/.test(ref)) {
+    const e = db.prepare('SELECT e.*, s.started_at FROM episodes e JOIN sessions s ON s.id = e.session WHERE e.rowid = ?').get(Number(ref.slice(1)));
+    return e && { ref, layer: 'episode', text: e.summary, when: e.started_at, evidence: parse(e.utterance_ids, []).slice(0, 4) };
+  }
+  return null;
+}
+
+/** Bonsai vector + exact-term BM25, fused into a fixed 2K shortlist. */
+export async function hybridSearch(db, bonsai, query, { person = null, k = 6, now = Date.now() } = {}) {
+  const lexical = search(db, query, { person, limit: 20, now });
+  const [vector] = await bonsai.embed(query);
+  const semantic = nearestRefs(db, vector, bonsai.model, { limit: 20 });
+  const candidates = new Map();
+  const add = (ref, rank, source) => {
+    const page = candidates.get(ref) ?? pageByRef(db, ref);
+    if (!page) return;
+    page.fusion = (page.fusion ?? 0) + 1 / (60 + rank);
+    (page.sources ??= []).push(source);
+    candidates.set(ref, page);
+  };
+  lexical.forEach((p, i) => add(p.ref, i + 1, 'bm25'));
+  semantic.forEach((p, i) => add(p.ref, i + 1, 'bonsai_vector'));
+  const pid = person ? db.prepare('SELECT id FROM people WHERE lower(name) = lower(?) OR id = ?').get(person, person)?.id : null;
+  const ranked = [...candidates.values()].map((p) => ({ ...p, fusion: p.fusion + (pid && p.personId === pid ? 0.01 : 0) }))
+    .sort((a, b) => b.fusion - a.fusion).slice(0, 2 * k);
+  return ranked;
 }
 
 export function readEpisode(db, rowid) {

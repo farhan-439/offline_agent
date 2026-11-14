@@ -6,6 +6,8 @@
 //   touched people ──sleep-time update: Bonsai rewrites core memory, retires outdated facts──▶ L3 core
 import { json, parse, now, tx } from './db.mjs';
 import { identify, enrollVoice, upsertPerson, findPersonByName } from './identity.mjs';
+import { indexMemories } from './embeddings.mjs';
+import { resolveWhen } from './temporal.mjs';
 
 const FILLER = /^(?:(?:um+|uh+|hmm+|mm+|yeah|yes|no|okay|ok|right|sure|oh|ah|so|well|like|i mean|you know)[\s,.!?]*)+$/i;
 export const EPISODE_GAP_S = 45;
@@ -74,13 +76,20 @@ function formatEpisode(ep, roster) {
 // ---------- sleep-time update · core memory ----------
 
 const CORE_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['core', 'outdated'],
-  properties: { core: { type: 'string', maxLength: 400 }, outdated: { type: 'array', items: { type: 'integer' } } },
+  type: 'object', additionalProperties: false, required: ['selected', 'outdated'],
+  properties: {
+    selected: { type: 'array', maxItems: 3, items: { type: 'integer' } },
+    outdated: { type: 'array', items: { type: 'integer' } },
+  },
 };
-const CORE_SYSTEM = `You maintain a short "core memory" card about one person in the owner's life, read aloud when the owner meets them.
-Given the person and their remembered facts (newest last, each with an id), return:
-- core: at most 50 words. Who they are to the owner, then the most important current things (upcoming plans, promises, health, allergies). Plain words.
-- outdated: ids of facts that a NEWER fact clearly replaces (e.g. an old dose replaced by a new dose). Usually empty.`;
+const CORE_SYSTEM = `Select up to three fact ids for a short reminder about this person. Prefer upcoming plans, promises, medication and allergies. Do not write prose. List outdated ids only when a newer fact clearly replaces an older one; otherwise return an empty array.`;
+
+function buildCore(person, facts) {
+  const lead = person.is_owner ? 'You' : `${person.name}${person.relation ? `, ${person.relation}` : ''}`;
+  const chunks = facts.map((f) => `${f.text}${f.when_text && !f.text.toLowerCase().includes(f.when_text.toLowerCase()) ? ` (${f.when_text})` : ''}`.replace(/[.\s]+$/, ''));
+  const words = `${lead}. ${chunks.join('. ')}.`.split(/\s+/);
+  return words.slice(0, 50).join(' ');
+}
 
 export async function refreshCore(db, bonsai, personId) {
   const person = db.prepare('SELECT * FROM people WHERE id = ?').get(personId);
@@ -90,13 +99,16 @@ export async function refreshCore(db, bonsai, personId) {
     facts.map((f) => `${f.rowid}. [${f.kind}${f.when_text ? `, ${f.when_text}` : ''}] ${f.text} (noted ${f.observed_at?.slice(0, 10) ?? '?'})`).join('\n');
   const out = await bonsai.json({ name: 'core_memory', system: CORE_SYSTEM, user, schema: CORE_SCHEMA, maxTokens: 300, temperature: 0.3 });
   const valid = new Set(facts.map((f) => f.rowid));
+  const chosen = [...new Set(out.selected ?? [])].filter((id) => valid.has(id));
+  const selected = chosen.length ? chosen.map((id) => facts.find((f) => f.rowid === id)) : facts.slice(-2);
+  const core = buildCore(person, selected);
   tx(db, () => {
-    db.prepare('UPDATE people SET core = ?, updated_at = ? WHERE id = ?').run(out.core, now(), personId);
+    db.prepare('UPDATE people SET core = ?, updated_at = ? WHERE id = ?').run(core, now(), personId);
     for (const id of out.outdated ?? []) if (valid.has(id) && id !== facts.at(-1).rowid) {
       db.prepare("UPDATE facts SET status = 'superseded' WHERE rowid = ?").run(id);
     }
   });
-  return out;
+  return { ...out, core };
 }
 
 // ---------- the dock pipeline ----------
@@ -161,8 +173,9 @@ export async function dock(db, bonsai, { onEvent = () => {} } = {}) {
           const person = f.about === 'OWNER' ? owner
             : [...roster.values()].find((p) => p.name?.toLowerCase() === f.about.toLowerCase()) ?? findPersonByName(db, f.about);
           const pid = person?.id ?? upsertPerson(db, { name: f.about });
-          const r = db.prepare('INSERT INTO facts (person_id, kind, text, when_text, evidence, session, episode, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-            .run(pid, f.kind, f.text, f.when ?? null, json(evidence), s.id, ep_.lastInsertRowid, s.started_at ?? now());
+          const resolved = resolveWhen(f.when, s.started_at);
+          const r = db.prepare('INSERT INTO facts (person_id, kind, text, when_text, when_resolved, evidence, session, episode, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(pid, f.kind, f.text, f.when ?? null, resolved, json(evidence), s.id, ep_.lastInsertRowid, s.started_at ?? now());
           const name = db.prepare('SELECT name FROM people WHERE id = ?').get(pid).name;
           db.prepare('INSERT INTO facts_fts (rowid, text, person, kind) VALUES (?, ?, ?, ?)').run(r.lastInsertRowid, `${f.text} ${f.when ?? ''}`, name, f.kind);
           report.people.add(pid);
@@ -186,6 +199,10 @@ export async function dock(db, bonsai, { onEvent = () => {} } = {}) {
   for (const pid of report.people) {
     const out = await refreshCore(db, bonsai, pid);
     if (out) onEvent({ type: 'core', person: pid, core: out.core });
+  }
+  if (typeof bonsai.embed === 'function') {
+    report.embeddings = await indexMemories(db, bonsai);
+    onEvent({ type: 'embeddings', ...report.embeddings });
   }
   return { ...report, people: [...report.people] };
 }

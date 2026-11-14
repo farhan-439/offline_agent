@@ -7,10 +7,13 @@ import path from 'node:path';
 import { openDb } from '../src/db.mjs';
 import { ingestFile, readSessionFile } from '../src/ingest.mjs';
 import { enrollOwner, identify, cosine } from '../src/identity.mjs';
-import { dock, segment, sensoryFilter } from '../src/dock.mjs';
-import { search } from '../src/retrieve.mjs';
+import { dock, refreshCore, segment, sensoryFilter } from '../src/dock.mjs';
+import { resolveWhen } from '../src/temporal.mjs';
+import { search, hybridSearch } from '../src/retrieve.mjs';
+import { indexMemories } from '../src/embeddings.mjs';
 import { ask, WORKING_BUDGET } from '../src/recall.mjs';
 import { whoIsThis } from '../src/whisper.mjs';
+import { Bonsai } from '../src/bonsai.mjs';
 
 const fx = (f) => path.resolve(import.meta.dirname, '../../contract/fixtures', f);
 const OWNER = [0.96, 0.04, 0.03, 0.02, 0.13, 0.02, 0.09, 0.02];
@@ -53,7 +56,7 @@ class FakeBonsai {
   async json({ name, user }) {
     this.calls.push({ name, user });
     if (name === 'extract') return structuredClone(Object.entries(EXTRACTIONS).find(([id]) => user.includes(`[${id}]`))[1]);
-    if (name === 'core_memory') return { core: `core for ${user.match(/Person: ([^\n(]+)/)[1].trim()}`, outdated: [] };
+    if (name === 'core_memory') return { selected: [...user.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1])).slice(0, 2), outdated: [] };
     if (name === 'whisper') return { line: 'This is Maya, your neighbour. You promised to water her tomatoes.' };
     if (name === 'recall_step') return this.script.shift() ?? { action: 'answer', query: null, person: null, episode: null, answer: 'fallback', cite: [] };
     throw new Error(`unexpected call ${name}`);
@@ -94,7 +97,7 @@ test('dock builds people from speech, binds voices, and rejects ungrounded facts
   assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-clinic' AND speaker = 'S0'").get().how, 'voice');
   // Maya was named by Bonsai from content, so her cluster's voiceprint is now enrolled
   assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-porch' AND speaker = 'S1'").get().how, 'named');
-  assert.ok(db.prepare("SELECT core FROM people WHERE name = 'Maya'").get().core.startsWith('core for Maya'));
+  assert.ok(db.prepare("SELECT core FROM people WHERE name = 'Maya'").get().core.startsWith('Maya'));
 });
 
 test('a new recording of Maya is recognised by voice and produces a whisper', async () => {
@@ -142,4 +145,98 @@ test('recall refuses to answer from nothing', async () => {
   bonsai.script = Array(5).fill({ action: 'search', query: 'xyzzy', person: null, episode: null, answer: null, cite: [] });
   const r = await ask(db, bonsai, 'What is my bank PIN?');
   assert.equal(r.grounded, false);
+});
+
+test('Bonsai vectors are indexed once and recover a paraphrased garden memory', async () => {
+  const { db } = await dockedDb();
+  const bonsai = {
+    model: 'bonsai-test', batches: 0,
+    async embed(texts) {
+      this.batches++;
+      return (Array.isArray(texts) ? texts : [texts]).map((s) => /garden|tomato|plant|water/i.test(s) ? [1, 0] : [0, 1]);
+    },
+  };
+  const first = await indexMemories(db, bonsai);
+  assert.ok(first.indexed >= 8);
+  assert.equal((await indexMemories(db, bonsai)).indexed, 0);
+  const hits = await hybridSearch(db, bonsai, 'Did anyone need help with their garden?', { k: 6 });
+  assert.ok(hits.some((h) => /Water Maya's tomato plants/.test(h.text)));
+  assert.ok(hits.length <= 12);
+  assert.ok(hits.some((h) => h.sources.includes('bonsai_vector')));
+});
+
+test('Bonsai plans and filters retrieval before paged answering', async () => {
+  const { db } = await dockedDb();
+  const calls = [];
+  const bonsai = {
+    model: 'bonsai-test',
+    async embed(texts) { return (Array.isArray(texts) ? texts : [texts]).map((s) => /garden|tomato|plant|water/i.test(s) ? [1, 0] : [0, 1]); },
+    async json({ name, user }) {
+      calls.push(name);
+      if (name === 'plan_query') return { queries: ['Maya garden help'], person: 'Maya' };
+      if (name === 'rerank') return { refs: [user.match(/\[(F\d+)\] [^\n]*Water Maya's tomato plants/)?.[1]] };
+      if (name === 'recall_step') return { action: 'answer', answer: 'You promised to water Maya’s tomato plants.', cite: [db.prepare("SELECT 'F' || rowid AS ref FROM facts WHERE text LIKE '%Water Maya%' LIMIT 1").get().ref] };
+      throw new Error(`unexpected ${name}`);
+    },
+  };
+  await indexMemories(db, bonsai);
+  const result = await ask(db, bonsai, 'Did Maya need help with her garden?');
+  assert.deepEqual(calls, ['plan_query', 'rerank', 'recall_step']);
+  assert.equal(result.grounded, true);
+  assert.ok(result.clips.some((c) => c.id === 'd1-porch#0005'));
+  assert.equal(result.trace[0].action, 'plan_query');
+  assert.equal(result.trace[1].action, 'rerank');
+});
+
+test('Bonsai embedding client preserves vector order and traces the call', async () => {
+  const client = new Bonsai({ fetchFn: async (_url, options) => {
+    assert.deepEqual(JSON.parse(options.body).input, ['first', 'second']);
+    return { ok: true, json: async () => ({ data: [
+      { index: 1, embedding: [0, 1] }, { index: 0, embedding: [1, 0] },
+    ] }) };
+  } });
+  assert.deepEqual(await client.embed(['first', 'second']), [[1, 0], [0, 1]]);
+  assert.equal(client.calls[0].name, 'embed');
+});
+
+test('Bonsai native tool call becomes a memory search action', async () => {
+  const client = new Bonsai({ fetchFn: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.ok(request.tools.some((t) => t.function.name === 'search_memory'));
+    return { ok: true, json: async () => ({ choices: [{ message: { tool_calls: [{ function: {
+      name: 'search_memory', arguments: '{"query":"Maya garden","person":"Maya"}',
+    } }] } }] }) };
+  } });
+  assert.deepEqual(await client.memoryAction({ system: 'Use tools', user: 'What did Maya ask?' }),
+    { action: 'search', query: 'Maya garden', person: 'Maya' });
+});
+
+test('relative dates are tied to the recording date', async () => {
+  assert.equal(resolveWhen('this Friday', '2026-11-10T09:14:00Z'), '2026-11-13');
+  assert.equal(resolveWhen('Sunday around noon', '2026-11-11T18:05:00Z'), '2026-11-15');
+  assert.equal(resolveWhen('December third', '2026-11-10T14:30:00Z'), '2026-12-03');
+  const { db } = await dockedDb();
+  assert.equal(db.prepare("SELECT when_resolved FROM facts WHERE text LIKE '%Coming for lunch%' LIMIT 1").get().when_resolved, '2026-11-15');
+});
+
+test('core card uses selected source facts rather than model prose', async () => {
+  const { db } = await dockedDb();
+  const lily = db.prepare("SELECT id FROM people WHERE name = 'Lily'").get().id;
+  await refreshCore(db, { async json() { return { selected: [db.prepare("SELECT rowid FROM facts WHERE person_id = ?").get(lily).rowid], outdated: [], core: 'Lily is your daughter and a genius.' }; } }, lily);
+  const core = db.prepare('SELECT core FROM people WHERE id = ?').get(lily).core;
+  assert.match(core, /Allergic to peanuts/);
+  assert.doesNotMatch(core, /genius|your daughter/);
+});
+
+test('recall rejects a weekday absent from its cited utterance', async () => {
+  const { db, bonsai } = await dockedDb();
+  const sam = db.prepare("SELECT 'F' || rowid AS ref FROM facts WHERE text LIKE '%Coming for lunch%' LIMIT 1").get().ref;
+  const lily = db.prepare("SELECT 'F' || rowid AS ref FROM facts WHERE text LIKE '%Allergic to peanuts%' LIMIT 1").get().ref;
+  bonsai.script = [
+    { action: 'answer', answer: 'Sam arrives Friday; avoid peanuts.', cite: [lily] },
+    { action: 'answer', answer: 'Sam said he is coming Sunday around noon.', cite: [sam] },
+  ];
+  const result = await ask(db, bonsai, 'When is Sam coming and what should I avoid cooking?');
+  assert.equal(result.trace.some((s) => s.action === 'answer_rejected'), true);
+  assert.match(result.answer, /Sunday/);
 });

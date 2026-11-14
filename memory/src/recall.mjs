@@ -3,10 +3,46 @@
 //   · a working context of memory pages it chose to load, under a hard character budget
 // and decides each step whether to search again, open an episode, or answer with citations.
 // Old pages are evicted (oldest first) when the budget is exceeded, MemGPT's queue manager.
-import { search, readEpisode, evidenceClips } from './retrieve.mjs';
+import { search, hybridSearch, readEpisode, evidenceClips } from './retrieve.mjs';
+import { resolveWhen } from './temporal.mjs';
 
 export const WORKING_BUDGET = 2400; // chars of paged-in memory; Bonsai's window must also fit prompt + answer
 export const MAX_STEPS = 4;
+export const RETRIEVAL_K = 6;
+
+const PLAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['queries', 'person'], properties: {
+  queries: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string' } },
+  person: { type: ['string', 'null'] },
+} };
+const SELECT_SCHEMA = { type: 'object', additionalProperties: false, required: ['refs'], properties: {
+  refs: { type: 'array', maxItems: RETRIEVAL_K, items: { type: 'string' } },
+} };
+
+async function selectMemories(db, bonsai, question, trace) {
+  const plan = await bonsai.json({ name: 'plan_query', schema: PLAN_SCHEMA, maxTokens: 160, temperature: 0.1,
+    system: `Plan memory retrieval. Split compound questions into standalone searches. Preserve names and time cues.
+Do not assume that an unnamed part concerns the person named in another part. For a question like "When is Sam coming and what should I not cook?", search both "Sam visit time" and "food allergies dietary restrictions guests"; set person to null because the food restriction may concern someone else.
+Set person only when every subquestion explicitly concerns that same person. Return queries and person only.`,
+    user: question });
+  const queries = [...new Set((plan.queries ?? []).map((q) => q.trim()).filter(Boolean))].slice(0, 3);
+  if (!queries.length) queries.push(question);
+  const pool = new Map();
+  for (const q of queries) {
+    for (const page of await hybridSearch(db, bonsai, q, { person: plan.person, k: RETRIEVAL_K })) {
+      const old = pool.get(page.ref);
+      if (!old || page.fusion > old.fusion) pool.set(page.ref, page);
+    }
+  }
+  const candidates = [...pool.values()].sort((a, b) => b.fusion - a.fusion).slice(0, 2 * RETRIEVAL_K);
+  trace.push({ step: 0, action: 'plan_query', queries, person: plan.person, candidates: candidates.map((p) => p.ref) });
+  if (!candidates.length) return [];
+  const choice = await bonsai.json({ name: 'rerank', schema: SELECT_SCHEMA, maxTokens: 130, temperature: 0.1,
+    system: `Select up to ${RETRIEVAL_K} memory refs that provide evidence for every part of the question. Prefer direct evidence over broad summaries. Never invent refs. Return refs only; do not answer.`,
+    user: `Question: ${question}\nSubquestions: ${queries.join(' | ')}\nCandidates:\n${candidates.map((p) => `[${p.ref}] ${p.text}`).join('\n')}` });
+  const selected = [...new Set(choice.refs ?? [])].filter((ref) => pool.has(ref)).slice(0, RETRIEVAL_K);
+  trace.push({ step: 0, action: 'rerank', selected });
+  return (selected.length ? selected : candidates.slice(0, RETRIEVAL_K).map((p) => p.ref)).map((ref) => pool.get(ref));
+}
 
 const STEP_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['action', 'query', 'person', 'episode', 'answer', 'cite'],
@@ -38,11 +74,21 @@ function renderPages(pages) {
     : `[${p.ref}] (${p.when?.slice(0, 10) ?? '?'}) ${p.text}`).join('\n');
 }
 
+function temporalGrounded(answer, clips) {
+  const claims = [...answer.matchAll(/\b(?:(?:this|next)\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:\d{1,2}(?:st|nd|rd|th)?|first|second|third|fourth|fifth)\b|\b(?:today|tomorrow)\b/gi)].map((m) => m[0]);
+  return claims.every((claim) => clips.some((clip) => {
+    const claimed = resolveWhen(claim, clip.started_at);
+    const spoken = resolveWhen(clip.text, clip.started_at);
+    return claimed && spoken && claimed === spoken;
+  }));
+}
+
 export async function ask(db, bonsai, question, { today = new Date().toISOString().slice(0, 10), onStep = () => {} } = {}) {
   const pages = [];
   const seen = new Map(); // ref → page, everything ever loaded (for citation validation)
   const evicted = [];
   const trace = [];
+  let feedback = '';
 
   const load = (items) => {
     for (const it of items) {
@@ -54,7 +100,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
   };
 
   // retrieval-first: seed working context so a small model rarely needs more than one hop
-  load(search(db, question));
+  load(typeof bonsai.embed === 'function' ? await selectMemories(db, bonsai, question, trace) : search(db, question));
   trace.push({ step: 0, action: 'search', query: question, loaded: pages.map((p) => p.ref) });
   onStep(trace.at(-1));
 
@@ -62,10 +108,11 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
     const final = step === MAX_STEPS;
     const user = `Today is ${today}.\nCORE MEMORY (people):\n${coreMemory(db)}\n\nWORKING MEMORY (pages loaded from disk):\n${renderPages(pages) || '(empty)'}` +
       (evicted.length ? `\n(${evicted.length} older pages were paged out: ${evicted.slice(-6).join(', ')}; search again if needed)` : '') +
-      `\n\nQUESTION: ${question}${final ? '\nThis is your last step: you must answer now.' : ''}`;
+      `\n\nQUESTION: ${question}${feedback ? `\n${feedback}` : ''}${final ? '\nThis is your last step: you must answer now.' : ''}`;
     let out;
     try {
-      out = await bonsai.json({ name: 'recall_step', system: SYSTEM, user, schema: STEP_SCHEMA, maxTokens: 250, temperature: 0.2 });
+      out = (typeof bonsai.memoryAction === 'function' ? await bonsai.memoryAction({ system: SYSTEM, user, final }) : null)
+        ?? await bonsai.json({ name: 'recall_step', system: SYSTEM, user, schema: STEP_SCHEMA, maxTokens: 250, temperature: 0.2 });
     } catch (e) {
       trace.push({ step, error: e.message });
       break;
@@ -74,18 +121,28 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
 
     if (out.action === 'search' && out.query) {
       const before = pages.length;
-      load(search(db, out.query, { person: out.person }));
+      load(typeof bonsai.embed === 'function'
+        ? (await hybridSearch(db, bonsai, out.query, { person: out.person, k: RETRIEVAL_K })).slice(0, RETRIEVAL_K)
+        : search(db, out.query, { person: out.person }));
       trace.push({ step, action: 'search', query: out.query, person: out.person, loaded: pages.slice(before).map((p) => p.ref) });
     } else if (out.action === 'open_episode' && /^E\d+$/.test(out.episode ?? '')) {
       const ep = readEpisode(db, Number(out.episode.slice(1)));
       if (ep) load([ep]);
       trace.push({ step, action: 'open_episode', episode: out.episode, found: !!ep });
     } else if (out.answer) {
-      const cites = (out.cite ?? []).filter((r) => seen.has(r)); // only pages it actually saw
+      const loaded = new Set(pages.map((p) => p.ref));
+      const cites = (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r)); // only pages still in context
       const ids = [...new Set(cites.flatMap((r) => seen.get(r).evidence ?? seen.get(r).lines?.map((l) => l.id) ?? []))];
+      const clips = evidenceClips(db, ids.slice(0, 4));
+      if (!temporalGrounded(out.answer, clips)) {
+        feedback = 'Your previous date or weekday was not supported by the cited utterances. Search for the exact event and use its spoken date; do not use the recording date.';
+        trace.push({ step, action: 'answer_rejected', reason: 'unsupported date', cite: cites });
+        onStep(trace.at(-1));
+        continue;
+      }
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
-      return { answer: out.answer, cites, clips: evidenceClips(db, ids.slice(0, 4)), trace, grounded: cites.length > 0 };
+      return { answer: out.answer, cites, clips, trace, grounded: cites.length > 0 };
     } else {
       trace.push({ step, action: out.action, note: 'missing argument' });
     }
