@@ -369,6 +369,18 @@ test('recall proposes a reminder but never applies it', async () => {
   assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 0);
 });
 
+test('a paging loop that ends without text still answers from the loaded pages', async () => {
+  const { db } = await docked();
+  const fake = { async json({ name }) {
+    if (name === 'recall_step') return { action: 'search', query: 'lisinopril', person: null, episode: null, answer: null, cite: [] };
+    if (name === 'final_answer') return { answer: 'Lisinopril was raised to ten milligrams.', cite: [] };
+    throw new Error(name);
+  } };
+  const r = await ask(db, fake, 'What is my lisinopril dose?');
+  assert.match(r.answer, /ten milligrams/);
+  assert.ok(r.trace.some((t) => t.step === 'fallback'));
+});
+
 // ---------- demo view data ----------
 
 test('the local service exposes mode, the people graph and recall traces', async () => {

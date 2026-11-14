@@ -66,16 +66,38 @@ in-memory database per run so docking and extraction variance are included. A re
 as a correct answer even if it contains the expected keywords; "evidence" means the cited clips
 include every expected utterance id.
 
-The final table is generated from `memory/eval/results/compare-<timestamp>.json` with
-`npm run summarize` after the 3×3 matrix finishes; fill it in here. Interim from the run in
-progress: bm25 29/30 answer, 23/30 evidence (~3.0 s median); hybrid 18/20 answer, 16/20 evidence
-(~6.2 s median); hybrid-rerank pending. An earlier pre-fix matrix scored bm25 30/30 & 20/30,
-hybrid 28/30 & 25/30, hybrid-rerank 28/30 & 23/30 — superseded, do not quote as final.
+### Full matrix (9 runs: 3 modes × 3 repetitions)
 
-```
-mode            answer  evidence  both   refusals  median ms
-(replace with `npm run summarize` output)
-```
+| mode | answer | evidence | both | refusals | median ms |
+|---|---|---|---|---|---|
+| bm25 | 29/30 | 23/30 | 23/30 | 0 | 2,796 |
+| hybrid | 27/30 | 23/30 | 23/30 | 3 | 5,838 |
+| hybrid-rerank | 24/30 | 22/30 | 22/30 | 3 | 6,113 |
+
+**Read this honestly:** on these ten questions, keyword retrieval is as good as or better than
+hybrid, and the Bonsai rerank costs ~2× latency without adding accuracy. The 8-document embedding
+probe (keyword 3/10 vs Bonsai 8/10) does **not** transfer to app-level accuracy on this set. Six
+runs refused with the evidence already in the prompt, and the compound Sam/Lily question failed in
+four of nine runs.
+
+### After the empty-answer fix (targeted check)
+
+The full matrix above ran **before** the `final_answer` fallback landed. Four previously failing
+questions were re-run once per mode on the fixed code:
+
+| mode | evidence correct | refusals | compound answer |
+|---|---|---|---|
+| hybrid | 3/4 | 0 | correct: Sunday noon **and** the peanut allergy |
+| hybrid-rerank | 2/4 | 0 | wrong: mentions lisinopril instead of the allergy |
+
+So the fallback removes the refusals in both modes. The rerank still drops the allergy page on the
+compound question in this sample; `hybrid` handled it. The garden question now answers correctly but
+cites the raw porch utterances rather than the promise fact, so its evidence check still fails.
+Latencies from this check were inflated by a warm GPU and are deliberately not reported.
+
+A full post-fix re-measurement of all three modes is the first job for the next agent
+(`npm run compare -- --repeats=3` + `npm run summarize`), because the 9-run table above predates the
+fallback.
 
 How to read it: the keyword answer check is lenient (a fluent sentence often contains the words),
 so **evidence accuracy is the honest signal**. Dock takes ~40 s per run (3 sessions, 3 extraction

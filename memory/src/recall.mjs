@@ -78,6 +78,10 @@ const STEP_SCHEMA = {
   },
 };
 
+const ANSWER_SCHEMA = { type: 'object', additionalProperties: false, required: ['answer', 'cite'], properties: {
+  answer: { type: 'string' }, cite: { type: 'array', maxItems: 4, items: { type: 'string' } },
+} };
+
 const SYSTEM = `You are Kindred, a private offline memory for the owner. You answer questions about the people in their life using ONLY memory pages.
 Each step, return exactly one action as JSON:
 - {"action":"search","query":"keywords","person":"name or null",...} to load more memory from disk.
@@ -221,6 +225,28 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       trace.push({ step, action: out.action, note: 'missing argument' });
     }
     onStep(trace.at(-1));
+  }
+  // Last resort: the paging loop can end without a well-formed answer (a 4B model sometimes
+  // returns an `answer` action with no text). Ask once, plainly, with the pages already loaded,
+  // instead of refusing while the evidence is sitting in the prompt.
+  if (pages.length) {
+    try {
+      const out = await bonsai.json({ name: 'final_answer', maxTokens: 200, temperature: 0.2, schema: ANSWER_SCHEMA,
+        system: 'Answer the question using ONLY the memory pages provided, in one or two short sentences. Cite page refs you used. If the pages truly do not contain the answer, say you do not remember. Never invent.',
+        user: `QUESTION: ${question}\n\nPAGES:\n${renderPages(pages)}` });
+      if (out.answer?.trim()) {
+        const loaded = new Set([...pages.map((p) => p.ref), ...corePages.map((p) => p.ref)]);
+        const cites = (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r));
+        const citedPages = cites.map((r) => seen.get(r));
+        const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
+        const clips = evidenceClips(db, ids.slice(0, 4));
+        const photos = evidencePhotos(db, citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean));
+        trace.push({ step: 'fallback', action: 'answer', cite: cites });
+        const result = { answer: out.answer.trim(), cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
+        if (persistTrace) saveTrace(db, question, result);
+        return result;
+      }
+    } catch { /* keep the refusal below */ }
   }
   const empty = { answer: "I couldn't find that in my memory.", cites: [], clips: [], photos: [], trace, grounded: false, mode };
   if (persistTrace) saveTrace(db, question, empty);
