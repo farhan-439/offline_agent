@@ -48,7 +48,7 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 
   for (const f of facts.values()) items.push({
     ref: `F${f.rowid}`, layer: 'fact', personId: f.person_id,
-    text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
+    text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
     when: f.observed_at, evidence: parse(f.evidence, []), bm25: f.rank,
   });
 
@@ -90,9 +90,10 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 
 function pageByRef(db, ref) {
   if (ref.startsWith('P:')) {
-    const p = db.prepare('SELECT id, name, relation, core, last_seen FROM people WHERE id = ?').get(ref.slice(2));
+    const p = db.prepare('SELECT id, name, relation, core, core_fact_ids, last_seen FROM people WHERE id = ?').get(ref.slice(2));
     if (!p || !p.core) return null;
-    const facts = db.prepare("SELECT evidence FROM facts WHERE person_id = ? AND status = 'active' ORDER BY observed_at DESC LIMIT 4").all(p.id);
+    const ids = parse(p.core_fact_ids, []).filter(Number.isInteger);
+    const facts = ids.flatMap((id) => db.prepare("SELECT evidence FROM facts WHERE rowid = ? AND person_id = ? AND status = 'active'").all(id, p.id));
     return { ref, layer: 'core', personId: p.id, text: `${p.name}${p.relation ? ` · ${p.relation}` : ''}: ${p.core}`,
       when: p.last_seen, evidence: [...new Set(facts.flatMap((f) => parse(f.evidence, [])))].slice(0, 4) };
   }
@@ -102,7 +103,7 @@ function pageByRef(db, ref) {
     if (!f) return null;
     const people = db.prepare('SELECT p.name FROM fact_people fp JOIN people p ON p.id = fp.person_id WHERE fp.fact = ?').all(Number(ref.slice(1))).map((r) => r.name);
     return { ref, layer: 'fact', personId: f.person_id,
-      text: `${f.person ?? '?'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}`,
+      text: `${f.person ?? '?'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
       when: f.observed_at, evidence: parse(f.evidence, []) };
   }
   if (/^E\d+$/.test(ref)) {

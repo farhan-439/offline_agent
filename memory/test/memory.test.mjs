@@ -11,7 +11,7 @@ import { dock, refreshCore, segment, sensoryFilter } from '../src/dock.mjs';
 import { resolveWhen } from '../src/temporal.mjs';
 import { search, hybridSearch, evidenceClips } from '../src/retrieve.mjs';
 import { indexMemories } from '../src/embeddings.mjs';
-import { ask, WORKING_BUDGET } from '../src/recall.mjs';
+import { ask, coreMemoryPages, WORKING_BUDGET } from '../src/recall.mjs';
 import { whoIsThis } from '../src/whisper.mjs';
 import { Bonsai } from '../src/bonsai.mjs';
 import { createHandler } from '../src/server.mjs';
@@ -244,6 +244,20 @@ test('core card uses selected source facts rather than model prose', async () =>
   const core = db.prepare('SELECT core FROM people WHERE id = ?').get(lily).core;
   assert.match(core, /Allergic to peanuts/);
   assert.doesNotMatch(core, /genius|your daughter/);
+});
+
+test('a core card cites only the facts selected to build it', async () => {
+  const db = openDb(':memory:');
+  const stamp = new Date().toISOString();
+  db.prepare('INSERT INTO people (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+    .run('p_alex', 'Alex', stamp, stamp);
+  const insert = db.prepare('INSERT INTO facts (person_id, kind, text, evidence, observed_at) VALUES (?, ?, ?, ?, ?)');
+  const chosen = insert.run('p_alex', 'personal', 'Alex has a blue bicycle', '["bike-line"]', stamp).lastInsertRowid;
+  insert.run('p_alex', 'health', 'Alex has a peanut allergy', '["allergy-line"]', stamp);
+  await refreshCore(db, { async json() { return { selected: [chosen], outdated: [] }; } }, 'p_alex');
+  const card = coreMemoryPages(db).find((p) => p.ref === 'P:p_alex');
+  assert.match(card.text, /blue bicycle/);
+  assert.deepEqual(card.evidence, ['bike-line']);
 });
 
 test('recall rejects a weekday absent from its cited utterance', async () => {

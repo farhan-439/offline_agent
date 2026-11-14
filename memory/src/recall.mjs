@@ -7,7 +7,7 @@ import { search, hybridSearch, readEpisode, evidenceClips, evidencePhotos } from
 import { resolveWhen } from './temporal.mjs';
 import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
-import { now } from './db.mjs';
+import { now, parse } from './db.mjs';
 
 export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
 export const MAX_STEPS = 4;
@@ -91,9 +91,10 @@ Rules: answer in one or two short spoken sentences, mention who said it and when
  * checks fail even though the model read the right memory.
  */
 export function coreMemoryPages(db) {
-  const people = db.prepare('SELECT id, name, relation, core, is_owner, last_seen FROM people ORDER BY is_owner DESC, last_seen DESC NULLS LAST LIMIT 12').all();
+  const people = db.prepare('SELECT id, name, relation, core, core_fact_ids, is_owner, last_seen FROM people ORDER BY is_owner DESC, last_seen DESC NULLS LAST LIMIT 12').all();
   return people.map((p) => {
-    const facts = db.prepare("SELECT evidence FROM facts WHERE person_id = ? AND status = 'active' ORDER BY observed_at DESC LIMIT 4").all(p.id);
+    const ids = parse(p.core_fact_ids, []).filter(Number.isInteger);
+    const facts = ids.flatMap((id) => db.prepare("SELECT evidence FROM facts WHERE rowid = ? AND person_id = ? AND status = 'active'").all(id, p.id));
     return {
       ref: `P:${p.id}`, layer: 'core', personId: p.id, when: p.last_seen,
       text: `${p.name}${p.relation ? ` (${p.relation})` : ''}${p.core ? `: ${p.core}` : ''}`,

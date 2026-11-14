@@ -93,7 +93,11 @@ Bonsai can call `search_memory`, `open_episode`, `answer_memory`, `play_original
 `set_reminder`, `correct_memory` and `forget_memory`. Only `play_original_clip` is read-only. The
 three state-changing actions are two-phase: recall returns a proposal and a spoken confirmation
 question and writes nothing; the change is applied only through
-`POST /action {"id":...,"confirm":true}`. Forgetting retracts facts (they stop being retrieved) and
-clears the person's core card; corrections supersede the old fact and re-index.
+`POST /action {"id":...,"confirm":true}`. The current `forget_memory` action retracts extracted
+facts and clears the person's core card. **It is not full deletion:** original utterances, episode
+summaries and audio remain available and may still be found. Its confirmation text states this.
+Full conversation/person deletion across L0–L3 and audio remains planned. Corrections supersede
+the old fact and re-index. A user correction does not inherit the old fact's audio citation, since
+that recording may contradict the corrected text.
 
 The primary [Zhang et al. LightMem paper](https://arxiv.org/abs/2604.07798) uses user-specific mid-term episodes and de-identified, user-agnostic long-term knowledge. Kindred adapts the retrieval design to private, person-specific facts; its `facts` table is **not** the paper's de-identified LTM. [Fang et al. LightMem](https://arxiv.org/abs/2510.18866) motivates filtering, topic segments, and dock-time updates; [MemGPT](https://arxiv.org/abs/2310.08560) motivates bounded working memory and paging.

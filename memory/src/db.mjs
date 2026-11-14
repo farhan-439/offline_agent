@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS clusters (
 -- People graph
 CREATE TABLE IF NOT EXISTS people (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, relation TEXT, is_owner INTEGER NOT NULL DEFAULT 0,
-  core TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
+  core TEXT, core_fact_ids TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
 );
 CREATE TABLE IF NOT EXISTS voices (
   person_id TEXT PRIMARY KEY REFERENCES people(id), vector TEXT NOT NULL, samples INTEGER NOT NULL
@@ -112,6 +112,8 @@ export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta
     db.exec('ALTER TABLE facts ADD COLUMN when_resolved TEXT');
   if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'about_raw'))
     db.exec('ALTER TABLE facts ADD COLUMN about_raw TEXT');
+  if (!db.prepare('PRAGMA table_info(people)').all().some((c) => c.name === 'core_fact_ids'))
+    db.exec('ALTER TABLE people ADD COLUMN core_fact_ids TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS fact_people_person ON fact_people(person_id)');
   db.exec('CREATE INDEX IF NOT EXISTS facts_person_status ON facts(person_id, status)');
   db.exec('CREATE INDEX IF NOT EXISTS photo_obs_photo ON photo_observations(photo_id)');

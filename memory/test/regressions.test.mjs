@@ -345,6 +345,8 @@ test('state-changing actions need confirmation; forgetting removes memories from
   const corrected = await runAction(db, null, { id: correction.id, confirm: true }, { confirm: true });
   assert.equal(corrected.status, 'applied');
   assert.ok(db.prepare("SELECT 1 FROM facts WHERE text = 'Avoid potassium supplements only' AND status = 'active'").get());
+  assert.equal(db.prepare('SELECT evidence FROM facts WHERE rowid = ?').get(Number(corrected.ref.slice(1))).evidence, '[]',
+    'a user correction must not cite old audio as proof of its new wording');
 
   const reminder = proposeAction(db, { kind: 'set_reminder', text: 'take the new pill', due: 'tomorrow' });
   await runAction(db, null, { id: reminder.id, confirm: true }, { confirm: true });
@@ -367,6 +369,26 @@ test('recall proposes a reminder but never applies it', async () => {
   assert.equal(r.pendingAction.status, 'needs_confirmation');
   assert.match(r.answer, /confirm/i);
   assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 0);
+});
+
+test('a pending action requires confirmation and a failed action remains pending', async () => {
+  const { db } = await docked();
+  const reminder = proposeAction(db, { kind: 'set_reminder', text: 'Call Maya' });
+  await assert.rejects(runAction(db, null, { kind: 'set_reminder', text: 'Call Maya', confirm: true }),
+    /confirm a pending action by id/);
+  const unchecked = await runAction(db, null, { id: reminder.id });
+  assert.equal(unchecked.status, 'needs_confirmation');
+  assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 0);
+  assert.equal(db.prepare('SELECT applied FROM memory_actions WHERE id = ?').get(reminder.id).applied, 0);
+
+  const failed = proposeAction(db, { kind: 'correct_memory', ref: 'F999999', text: 'A correction' });
+  await assert.rejects(runAction(db, null, { id: failed.id, confirm: true }), /no such memory/);
+  assert.equal(db.prepare('SELECT applied FROM memory_actions WHERE id = ?').get(failed.id).applied, 0);
+
+  const applied = await runAction(db, null, { id: reminder.id, confirm: true });
+  assert.equal(applied.status, 'applied');
+  assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 1);
+  assert.equal((await runAction(db, null, { id: reminder.id, confirm: true })).status, 'already_applied');
 });
 
 // ---------- demo view data ----------

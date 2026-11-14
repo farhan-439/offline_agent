@@ -129,7 +129,8 @@ export async function refreshCore(db, bonsai, personId) {
   const selected = chosen.length ? chosen.map((id) => facts.find((f) => f.rowid === id)) : facts.slice(-2);
   const core = buildCore(person, selected);
   tx(db, () => {
-    db.prepare('UPDATE people SET core = ?, updated_at = ? WHERE id = ?').run(core, now(), personId);
+    db.prepare('UPDATE people SET core = ?, core_fact_ids = ?, updated_at = ? WHERE id = ?')
+      .run(core, json(selected.map((f) => f.rowid)), now(), personId);
     for (const id of out.outdated ?? []) if (valid.has(id) && id !== facts.at(-1).rowid) {
       db.prepare("UPDATE facts SET status = 'superseded' WHERE rowid = ?").run(id);
     }
