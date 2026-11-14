@@ -17,6 +17,7 @@
     "stress": "node --disable-warning=ExperimentalWarning eval/stress.mjs",
     "compare:embeddings": "node --disable-warning=ExperimentalWarning eval/embedding-compare-cli.mjs",
     "server": "node --disable-warning=ExperimentalWarning src/server.mjs",
+    "lab": "KINDRED_DB=../data/input-lab.sqlite node --disable-warning=ExperimentalWarning src/server.mjs",
     "kindred": "node --disable-warning=ExperimentalWarning src/cli.mjs",
     "compare": "node --disable-warning=ExperimentalWarning eval/compare.mjs",
     "summarize": "node --disable-warning=ExperimentalWarning eval/summarize.mjs"

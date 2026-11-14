@@ -1,6 +1,7 @@
 // Long-running localhost bridge for capture and UI. Dock/ingest/ask/photo are serialized;
 // voice identification reads the already-docked cards immediately.
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openDb } from './db.mjs';
@@ -9,9 +10,17 @@ import { ingestEvents, ingestFile } from './ingest.mjs';
 import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
-import { resolveMode, describeMode } from './capabilities.mjs';
+import { resolveMode, describeMode, MODES } from './capabilities.mjs';
 import { ingestPhoto, askPhoto } from './photos.mjs';
 import { runAction, pendingActions } from './actions.mjs';
+import { addInput, listInputs } from './inputs.mjs';
+
+const PUBLIC = path.resolve(import.meta.dirname, '../public');
+const ASSETS = new Map([
+  ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/lab.css', ['lab.css', 'text/css; charset=utf-8']],
+  ['/lab.js', ['lab.js', 'text/javascript; charset=utf-8']],
+]);
 
 async function bodyOf(req) {
   let text = '';
@@ -43,8 +52,15 @@ export function createHandler(db, bonsai) {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(data));
     };
+    const sendAsset = (name, type) => {
+      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store',
+        'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'" });
+      res.end(readFileSync(path.join(PUBLIC, name)));
+    };
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
+      if (req.method === 'GET' && ASSETS.has(url.pathname)) return sendAsset(...ASSETS.get(url.pathname));
+      if (req.method === 'GET' && url.pathname === '/inputs') return send(200, { inputs: listInputs(db) });
       if (req.method === 'GET' && url.pathname === '/health') {
         const mode = await resolveMode(bonsai);
         return send(200, { ok: true, model: bonsai?.model ?? null, retrievalMode: mode.mode,
@@ -60,6 +76,11 @@ export function createHandler(db, bonsai) {
       if (req.method === 'GET' && url.pathname === '/actions') return send(200, { pending: pendingActions(db) });
       if (req.method !== 'POST') return send(404, { error: 'unknown route' });
       const input = await bodyOf(req);
+      if (url.pathname === '/input') {
+        if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 4000)
+          return send(400, { error: 'Input must contain 1–4,000 characters' });
+        return send(200, await serial(() => addInput(db, bonsai, input.text)));
+      }
       if (url.pathname === '/identify' || url.pathname === '/who') {
         if (!Array.isArray(input.voiceprint)) return send(400, { error: 'voiceprint array required' });
         const result = await whoIsThis(db, null, input.voiceprint);
@@ -72,6 +93,7 @@ export function createHandler(db, bonsai) {
       if (url.pathname === '/dock') return send(200, await serial(() => dock(db, bonsai)));
       if (url.pathname === '/ask') {
         if (typeof input.question !== 'string' || !input.question.trim()) return send(400, { error: 'question required' });
+        if (input.mode && !MODES.includes(input.mode)) return send(400, { error: 'invalid retrieval mode' });
         return send(200, await serial(() => ask(db, bonsai, input.question, input.mode ? { mode: input.mode } : {})));
       }
       if (url.pathname === '/ask-photo') {

@@ -9,6 +9,7 @@ import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
 import { now, parse } from './db.mjs';
 import { askPhoto } from './photos.mjs';
+import { evidenceInputs } from './inputs.mjs';
 
 export const WORKING_BUDGET = Math.min(20_000, Math.max(1200, Number(process.env.KINDRED_WORKING_CHARS || 2400))); // raise with a larger server context
 export const MAX_STEPS = 4;
@@ -79,7 +80,7 @@ const STEP_SCHEMA = {
   },
 };
 
-const SYSTEM = `You are Kindred, a private offline memory for the owner. You answer questions about the people in their life using ONLY memory pages.
+const SYSTEM = `You are Kindred, a private offline memory for the owner. You answer questions using ONLY memory pages. Pages marked N are exact text inputs written by the owner; cite them just like other pages.
 Each step, return exactly one action as JSON:
 - {"action":"search","query":"keywords","person":"name or null",...} to load more memory from disk.
 - {"action":"open_episode","episode":"E7",...} to read the exact words of a conversation.
@@ -234,6 +235,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       const citedPages = cites.map((r) => seen.get(r));
       const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
       const clips = evidenceClips(db, ids.slice(0, 4));
+      const inputs = evidenceInputs(db, cites);
       const photoIds = citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean);
       const photos = evidencePhotos(db, photoIds);
       const missedAllergen = missedFoodAllergy(question, out.answer, clips);
@@ -243,7 +245,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         onStep(trace.at(-1));
         continue;
       }
-      if (!temporalGrounded(out.answer, clips)) {
+      if (!temporalGrounded(out.answer, [...clips, ...inputs.map((note) => ({ text: note.text, started_at: note.createdAt }))])) {
         feedback = 'Your previous date or weekday was not supported by the cited utterances. Search for the exact event and use its spoken date; do not use the recording date.';
         trace.push({ step, action: 'answer_rejected', reason: 'unsupported date', cite: cites });
         onStep(trace.at(-1));
@@ -251,7 +253,8 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       }
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
-      const result = { answer: out.answer, cites, clips, photos, trace, grounded: clips.length > 0 || photos.length > 0, mode };
+      const result = { answer: out.answer, cites, clips, photos, inputs, trace,
+        grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
     } else {

@@ -70,6 +70,12 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 
 `npm run server` keeps memory loaded on `127.0.0.1:8787` (`KINDRED_PORT` overrides the port). POST JSON to `/ingest` with `{"file":"/path/to/session.jsonl"}` or `{"events":[...]}`, `/dock` with `{}`, `/ask` with `{"question":"..."}` (optional `"mode"`), and `/identify` with `{"speaker":"S1","voiceprint":[...]}`. `/identify` reads the docked card without waiting for a Bonsai generation call, keeping live recognition responsive. This service does not change the capture contract.
 
+### Input Lab
+
+For a hands-on retrieval test, start the local Bonsai 4B server, then run `cd memory && npm run lab` and open `http://127.0.0.1:8787/`. The lab uses its own `data/input-lab.sqlite` file so experiments do not mix with captured conversations. Add text under **Input**, then ask a question in different words. Bonsai embeds the exact input when its embedding endpoint is enabled; keyword search remains available. The answer shows the exact saved inputs it cited and a search trace. The retrieval selector lets you compare keywords, Bonsai vectors, and Bonsai's selection step. All requests stay on this Mac.
+
+The lab stores the original text as its source. It does not turn a typed input into an extracted fact first, so you can judge retrieval without extraction changing your wording. To clear the lab, stop the server and remove the gitignored `data/input-lab.sqlite` file and its SQLite sidecar files.
+
 | Endpoint | Returns |
 |---|---|
 | `GET /health` | active retrieval mode, embedding capability, model |

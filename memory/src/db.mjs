@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS photo_observations (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS photo_observations_fts USING fts5(text);
 
+-- Direct user inputs for the local retrieval tester. Keep the exact words as evidence.
+CREATE TABLE IF NOT EXISTS input_notes (
+  rowid INTEGER PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS input_notes_fts USING fts5(text);
+
 -- Which people appear in a photo (validated names only)
 CREATE TABLE IF NOT EXISTS photo_people (
   photo_id TEXT NOT NULL REFERENCES photos(id), person_id TEXT NOT NULL REFERENCES people(id),
