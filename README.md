@@ -22,7 +22,7 @@
 
 ## 2. Product
 
-**Who it's for:** someone with early dementia or memory loss (and the caregiver who worries about them). Also anyone who meets many people.
+**Who it's for:** an older adult with memory loss (and their caregiver), while remaining useful to anyone who needs a private memory of conversations.
 
 **Three moments**
 
@@ -31,6 +31,8 @@
 3. **Recall.**
    - **Live whisper:** a known voice starts talking → *"This is Maya, your neighbour. You promised to water her tomatoes."* (Argmax voiceprint → Bonsai memory → Argmax TTS)
    - **Ask:** *"What did the doctor change about my medication?"* → spoken answer + the original audio clip as proof.
+
+Kindred is meant to remember ordinary conversations, family and doctor calls, appointments, promises, and directions. For travel, the planned Argmax capture flow can pair speech in the original language with a translation. Memory keeps both and cites the original audio; Bonsai can answer a later question such as *"How do we get back to the station?"* and Argmax can speak the answer. The live translation flow is being built in `capture/`.
 
 ### Why not just use Omi?
 

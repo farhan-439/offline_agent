@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS utterances (
   rowid INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, session TEXT NOT NULL REFERENCES sessions(id),
-  speaker TEXT, start REAL, end REAL, text TEXT NOT NULL, audio TEXT, kept INTEGER NOT NULL DEFAULT 1
+  speaker TEXT, start REAL, end REAL, text TEXT NOT NULL, language TEXT, translation TEXT,
+  audio TEXT, kept INTEGER NOT NULL DEFAULT 1
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS utterances_fts USING fts5(text);
 
@@ -65,6 +66,9 @@ export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta
   if (file !== ':memory:') mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
+  const utteranceColumns = new Set(db.prepare('PRAGMA table_info(utterances)').all().map((c) => c.name));
+  if (!utteranceColumns.has('language')) db.exec('ALTER TABLE utterances ADD COLUMN language TEXT');
+  if (!utteranceColumns.has('translation')) db.exec('ALTER TABLE utterances ADD COLUMN translation TEXT');
   if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'when_resolved'))
     db.exec('ALTER TABLE facts ADD COLUMN when_resolved TEXT');
   return db;

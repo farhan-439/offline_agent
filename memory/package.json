@@ -10,6 +10,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs",
     "demo": "node --disable-warning=ExperimentalWarning src/cli.mjs demo",
     "eval": "node --disable-warning=ExperimentalWarning eval/run.mjs",
+    "server": "node --disable-warning=ExperimentalWarning src/server.mjs",
     "kindred": "node --disable-warning=ExperimentalWarning src/cli.mjs"
   }
 }

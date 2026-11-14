@@ -61,7 +61,7 @@ Each step, return exactly one action as JSON:
 - {"action":"search","query":"keywords","person":"name or null",...} to load more memory from disk.
 - {"action":"open_episode","episode":"E7",...} to read the exact words of a conversation.
 - {"action":"answer","answer":"...","cite":["F3","E7"],...} when the pages are enough.
-Rules: answer in one or two short spoken sentences, mention who said it and when. Cite page refs you used. If memory does not contain the answer, say you don't remember that, and do not guess. Unused fields are null or [].`;
+Rules: answer in one or two short spoken sentences, mention who said it and when. Answer in the question's language when possible. A translation is for understanding; the cited original utterance is the proof. Cite page refs you used. If memory does not contain the answer, say you don't remember that, and do not guess. Unused fields are null or [].`;
 
 export function coreMemory(db) {
   const people = db.prepare('SELECT name, relation, core, is_owner, last_seen FROM people ORDER BY is_owner DESC, last_seen DESC NULLS LAST LIMIT 12').all();
@@ -70,7 +70,7 @@ export function coreMemory(db) {
 
 function renderPages(pages) {
   return pages.map((p) => p.lines
-    ? `[${p.ref}] conversation ${p.when?.slice(0, 10) ?? ''}${p.place ? ` at ${p.place}` : ''}:\n${p.lines.map((l) => `  ${l.who}: ${l.text}`).join('\n')}`
+    ? `[${p.ref}] conversation ${p.when?.slice(0, 10) ?? ''}${p.place ? ` at ${p.place}` : ''}:\n${p.lines.map((l) => `  ${l.who}: ${l.text}${l.translation ? ` [translation: ${l.translation}]` : ''}`).join('\n')}`
     : `[${p.ref}] (${p.when?.slice(0, 10) ?? '?'}) ${p.text}`).join('\n');
 }
 
@@ -78,7 +78,7 @@ function temporalGrounded(answer, clips) {
   const claims = [...answer.matchAll(/\b(?:(?:this|next)\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:\d{1,2}(?:st|nd|rd|th)?|first|second|third|fourth|fifth)\b|\b(?:today|tomorrow)\b/gi)].map((m) => m[0]);
   return claims.every((claim) => clips.some((clip) => {
     const claimed = resolveWhen(claim, clip.started_at);
-    const spoken = resolveWhen(clip.text, clip.started_at);
+    const spoken = resolveWhen(clip.translation || clip.text, clip.started_at);
     return claimed && spoken && claimed === spoken;
   }));
 }

@@ -24,9 +24,18 @@ export function ingestEvents(db, events) {
       } else if (e.type === 'session_end') {
         db.prepare('UPDATE sessions SET ended_at = ? WHERE id = ?').run(e.endedAt ?? null, e.session);
       } else if (e.type === 'utterance' && e.id && e.text?.trim()) {
-        const r = db.prepare('INSERT OR IGNORE INTO utterances (id, session, speaker, start, end, text, audio) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .run(e.id, e.session, e.speaker ?? null, e.start ?? null, e.end ?? null, e.text.trim(), e.audio ?? null);
-        if (r.changes) db.prepare('INSERT INTO utterances_fts (rowid, text) VALUES (?, ?)').run(r.lastInsertRowid, e.text.trim());
+        const translation = (e.translation ?? e.translatedText)?.trim() || null;
+        const r = db.prepare('INSERT OR IGNORE INTO utterances (id, session, speaker, start, end, text, language, translation, audio) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(e.id, e.session, e.speaker ?? null, e.start ?? null, e.end ?? null, e.text.trim(), e.language ?? null, translation, e.audio ?? null);
+        if (r.changes) db.prepare('INSERT INTO utterances_fts (rowid, text) VALUES (?, ?)').run(r.lastInsertRowid, `${e.text.trim()} ${translation ?? ''}`.trim());
+        else if (translation) {
+          const old = db.prepare('SELECT rowid, text, translation FROM utterances WHERE id = ?').get(e.id);
+          if (old && !old.translation) {
+            db.prepare('UPDATE utterances SET translation = ?, language = coalesce(language, ?) WHERE rowid = ?').run(translation, e.language ?? null, old.rowid);
+            db.prepare('DELETE FROM utterances_fts WHERE rowid = ?').run(old.rowid);
+            db.prepare('INSERT INTO utterances_fts (rowid, text) VALUES (?, ?)').run(old.rowid, `${old.text} ${translation}`);
+          }
+        }
       } else if (e.type === 'speaker' && e.speaker) {
         db.prepare(`INSERT INTO clusters (session, speaker, voiceprint, seconds) VALUES (?, ?, ?, ?)
           ON CONFLICT (session, speaker) DO UPDATE SET voiceprint = coalesce(excluded.voiceprint, voiceprint), seconds = excluded.seconds`)

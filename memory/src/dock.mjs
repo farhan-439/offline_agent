@@ -39,7 +39,7 @@ export function segment(utterances, { gap = EPISODE_GAP_S, maxWords = EPISODE_MA
 
 // ---------- stage 2 · Bonsai extraction ----------
 
-const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'other'];
+const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'directions', 'travel', 'other'];
 
 const EXTRACT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['summary', 'speakers', 'mentioned', 'facts'],
@@ -63,13 +63,13 @@ Return JSON:
 - summary: one or two sentences, third person, name people when known.
 - speakers: for every label, the person's name and their relation to the owner, only if the excerpt states it (e.g. "it's Maya from next door"). Use null when not stated. The owner's label is OWNER.
 - mentioned: people who are talked about but not speaking (e.g. a daughter), with relation to the speaker or owner.
-- facts: things the owner would want to remember later about a person: plans with dates, promises, health, medication changes, allergies, preferences, family news. "about" is the person's name (or OWNER). Copy dates/times exactly as said in "when". "evidence" lists the utterance ids that state the fact. Never invent anything not said.`;
+- facts: things the owner would want to remember later: plans with dates, promises, health, medication changes, allergies, preferences, family news, directions, landmarks, addresses and travel instructions. "about" is the person's name (or OWNER). Copy dates/times exactly as said in "when". "evidence" lists the utterance ids that state the fact. When a line has a translation, use it for meaning but cite the same original utterance id. Never invent anything not said.`;
 
 function formatEpisode(ep, roster) {
   return ep.utterances.map((u) => {
     const who = roster.get(u.speaker);
     const label = who?.isOwner ? 'OWNER' : `${u.speaker}${who ? ` (${who.name})` : ' (?)'}`;
-    return `[${u.id}] ${label}: ${u.text}`;
+    return `[${u.id}] ${label}: ${u.text}${u.translation ? ` [translation: ${u.translation}]` : ''}`;
   }).join('\n');
 }
 
@@ -132,7 +132,7 @@ export async function dock(db, bonsai, { onEvent = () => {} } = {}) {
 
     // 2 · stage 1: sensory filter + segmentation
     const all = db.prepare('SELECT * FROM utterances WHERE session = ? ORDER BY start, rowid').all(s.id);
-    const kept = all.filter((u) => sensoryFilter(u.text));
+    const kept = all.filter((u) => sensoryFilter(u.translation || u.text));
     for (const u of all) if (!kept.includes(u)) db.prepare('UPDATE utterances SET kept = 0 WHERE rowid = ?').run(u.rowid);
     report.dropped += all.length - kept.length;
     const episodes = segment(kept);

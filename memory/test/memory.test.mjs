@@ -5,15 +5,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { openDb } from '../src/db.mjs';
-import { ingestFile, readSessionFile } from '../src/ingest.mjs';
+import { ingestEvents, ingestFile, readSessionFile } from '../src/ingest.mjs';
 import { enrollOwner, identify, cosine } from '../src/identity.mjs';
 import { dock, refreshCore, segment, sensoryFilter } from '../src/dock.mjs';
 import { resolveWhen } from '../src/temporal.mjs';
-import { search, hybridSearch } from '../src/retrieve.mjs';
+import { search, hybridSearch, evidenceClips } from '../src/retrieve.mjs';
 import { indexMemories } from '../src/embeddings.mjs';
 import { ask, WORKING_BUDGET } from '../src/recall.mjs';
 import { whoIsThis } from '../src/whisper.mjs';
 import { Bonsai } from '../src/bonsai.mjs';
+import { createHandler } from '../src/server.mjs';
+import { Readable } from 'node:stream';
 
 const fx = (f) => path.resolve(import.meta.dirname, '../../contract/fixtures', f);
 const OWNER = [0.96, 0.04, 0.03, 0.02, 0.13, 0.02, 0.09, 0.02];
@@ -239,4 +241,42 @@ test('recall rejects a weekday absent from its cited utterance', async () => {
   const result = await ask(db, bonsai, 'When is Sam coming and what should I avoid cooking?');
   assert.equal(result.trace.some((s) => s.action === 'answer_rejected'), true);
   assert.match(result.answer, /Sunday/);
+});
+
+test('translated directions are searchable while clips retain the original speech', async () => {
+  const db = openDb(':memory:');
+  enrollOwner(db, OWNER);
+  const start = { type: 'session_start', session: 'travel1', startedAt: '2026-11-14T12:00:00Z' };
+  const original = { type: 'utterance', session: 'travel1', id: 'travel1#0001', speaker: 'S1',
+    start: 0, end: 4, text: 'Tournez à gauche après la pharmacie.', language: 'fr', audio: 'data/audio/travel1.wav' };
+  ingestEvents(db, [start, original]);
+  ingestEvents(db, [{ ...original, translation: 'Turn left after the pharmacy to reach the station.' }]);
+  const found = search(db, 'pharmacy station');
+  assert.ok(found.some((p) => p.ref === 'U:travel1#0001'));
+  const bonsai = { async json({ name }) {
+    if (name === 'extract') return { summary: 'Directions to the station past the pharmacy.', speakers: [], mentioned: [],
+      facts: [{ about: 'OWNER', kind: 'directions', text: 'Turn left after the pharmacy to reach the station', when: null, evidence: ['travel1#0001'] }] };
+    if (name === 'core_memory') return { selected: [], outdated: [] };
+    throw new Error(name);
+  } };
+  await dock(db, bonsai);
+  const clip = evidenceClips(db, ['travel1#0001'])[0];
+  assert.equal(clip.text, original.text);
+  assert.match(clip.translation, /pharmacy/);
+  assert.equal(clip.language, 'fr');
+  assert.equal(db.prepare("SELECT kind FROM facts WHERE session = 'travel1'").get().kind, 'directions');
+});
+
+test('local service identifies a voice from docked memory without a Bonsai call', async () => {
+  const { db } = await dockedDb();
+  const handler = createHandler(db, { async json() { throw new Error('Bonsai should not run for identify'); } });
+  const live = readSessionFile(fx('day3-live-maya.jsonl')).find((e) => e.type === 'speaker');
+  const req = Readable.from([JSON.stringify({ speaker: 'S1', voiceprint: live.voiceprint })]);
+  Object.assign(req, { method: 'POST', url: '/identify' });
+  let status, output;
+  await handler(req, { writeHead(code) { status = code; }, end(text) { output = JSON.parse(text); } });
+  assert.equal(status, 200);
+  assert.equal(output.type, 'identity');
+  assert.equal(output.name, 'Maya');
+  assert.match(output.whisper, /^This is Maya/);
 });

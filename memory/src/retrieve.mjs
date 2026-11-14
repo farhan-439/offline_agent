@@ -45,7 +45,7 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
     }
     for (const u of db.prepare(`SELECT u.*, s.started_at, bm25(utterances_fts) AS rank FROM utterances_fts JOIN utterances u ON u.rowid = utterances_fts.rowid
         JOIN sessions s ON s.id = u.session WHERE utterances_fts MATCH ? AND u.kept = 1 ORDER BY rank LIMIT 10`).all(q)) {
-      items.push({ ref: `U:${u.id}`, layer: 'utterance', text: `"${u.text}"`, when: u.started_at, evidence: [u.id], bm25: u.rank });
+      items.push({ ref: `U:${u.id}`, layer: 'utterance', text: `"${u.text}"${u.translation ? ` [translation: ${u.translation}]` : ''}`, when: u.started_at, evidence: [u.id], bm25: u.rank });
     }
   }
 
@@ -110,13 +110,13 @@ export function readEpisode(db, rowid) {
   const e = db.prepare('SELECT e.*, s.started_at, s.place FROM episodes e JOIN sessions s ON s.id = e.session WHERE e.rowid = ?').get(rowid);
   if (!e) return null;
   const ids = parse(e.utterance_ids, []);
-  const lines = ids.map((id) => db.prepare(`SELECT u.id, u.text, coalesce(p.name, u.speaker) AS who FROM utterances u
+  const lines = ids.map((id) => db.prepare(`SELECT u.id, u.text, u.language, u.translation, coalesce(p.name, u.speaker) AS who FROM utterances u
     LEFT JOIN clusters c ON c.session = u.session AND c.speaker = u.speaker LEFT JOIN people p ON p.id = c.person_id WHERE u.id = ?`).get(id)).filter(Boolean);
   return { ref: `E${rowid}`, when: e.started_at, place: e.place, summary: e.summary, lines };
 }
 
 export function evidenceClips(db, ids) {
-  return ids.map((id) => db.prepare(`SELECT u.id, u.text, u.audio, u.start, u.end, s.started_at, coalesce(p.name, u.speaker) AS speaker
+  return ids.map((id) => db.prepare(`SELECT u.id, u.text, u.language, u.translation, u.audio, u.start, u.end, s.started_at, coalesce(p.name, u.speaker) AS speaker
     FROM utterances u JOIN sessions s ON s.id = u.session LEFT JOIN clusters c ON c.session = u.session AND c.speaker = u.speaker
     LEFT JOIN people p ON p.id = c.person_id WHERE u.id = ?`).get(id)).filter(Boolean);
 }

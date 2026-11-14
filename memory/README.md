@@ -27,4 +27,12 @@ The currently running server must be restarted with the embedding flags before a
 
 `npm run eval` runs ten fixture questions against real Bonsai and reports answer keywords, evidence ids and latency. `npm run eval -- --bm25` runs the keyword retrieval ablation with the same Bonsai generator. Repeat runs because sampling and extraction vary. The keyword checks are intentionally narrow and should be reviewed alongside the actual answers.
 
+## Multilingual conversation memory
+
+Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` text on an utterance event. The original `text` and audio offsets remain the evidence; translation is indexed for English recall and shown alongside the original to Bonsai. Dock can extract `directions` and `travel` facts, and answers carry both original and translated text in their clips. These optional fields are an internal receiver capability until the capture team agrees on the shared contract.
+
+## Local service
+
+`npm run server` keeps memory loaded on `127.0.0.1:8787` (`KINDRED_PORT` overrides the port). POST JSON to `/ingest` with `{"file":"/path/to/session.jsonl"}` or `{"events":[...]}`, `/dock` with `{}`, `/ask` with `{"question":"..."}`, and `/identify` with `{"speaker":"S1","voiceprint":[...]}`. `/identify` reads the docked card without waiting for a Bonsai generation call, keeping live recognition responsive. `GET /health` checks the service. This service does not change the capture contract.
+
 The primary [Zhang et al. LightMem paper](https://arxiv.org/abs/2604.07798) uses user-specific mid-term episodes and de-identified, user-agnostic long-term knowledge. Kindred adapts the retrieval design to private, person-specific facts; its `facts` table is **not** the paper's de-identified LTM. [Fang et al. LightMem](https://arxiv.org/abs/2510.18866) motivates filtering, topic segments, and dock-time updates; [MemGPT](https://arxiv.org/abs/2310.08560) motivates bounded working memory and paging.
