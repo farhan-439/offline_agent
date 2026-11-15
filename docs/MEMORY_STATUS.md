@@ -66,18 +66,35 @@ in-memory database per run so docking and extraction variance are included. A re
 as a correct answer even if it contains the expected keywords; "evidence" means the cited clips
 include every expected utterance id.
 
-The completed 3×3 matrix on branch commit `0cd8651` produced this output from
-`npm run summarize` (2026-11-14). It predates the review fixes to action confirmation,
-core-card evidence, and photo reinspection. The generated JSON was removed from the working
-directory after summarization, so rerun `npm run compare -- --repeats=3` to reproduce per-question
-rows. An earlier pre-fix matrix is superseded and should not be quoted.
+### Real-model retrieval matrix
 
-```
-mode            answer  evidence  both   refusals  median ms
-bm25            29/30   23/30     23/30  0         2796
-hybrid          27/30   23/30     23/30  3         5838
-hybrid-rerank   24/30   22/30     22/30  3         6113
-```
+| mode | answer | evidence | both | refusals | median ms |
+|---|---|---|---|---|---|
+| bm25 | 29/30 | 23/30 | 23/30 | 0 | 2,796 |
+| hybrid | 27/30 | 23/30 | 23/30 | 3 | 5,838 |
+| hybrid-rerank | 24/30 | 22/30 | 22/30 | 3 | 6,113 |
+
+The matrix predates the review fixes to action confirmation, core-card evidence and photo
+reinspection, and the empty-answer fallback. Its JSON was removed after summarization, so rerun
+`npm run compare -- --repeats=3` to reproduce per-question rows.
+
+**Read this honestly:** on these ten questions, keyword retrieval is as good as or better than
+hybrid, and the Bonsai rerank costs ~2× latency without adding accuracy. The 8-document embedding
+probe (keyword 3/10 vs Bonsai 8/10) does **not** transfer to app-level accuracy on this set.
+
+### After the empty-answer fix (targeted check)
+
+Four previously failing questions were re-run once per mode on the fixed code:
+
+| mode | evidence correct | refusals | compound answer |
+|---|---|---|---|
+| hybrid | 3/4 | 0 | correct: Sunday noon **and** the peanut allergy |
+| hybrid-rerank | 2/4 | 0 | wrong: mentions lisinopril instead of the allergy |
+
+The fallback removes the refusals in both modes. The rerank still drops the allergy page on the
+compound question in this sample; `hybrid` handled it. Latencies from that check were inflated by a
+warm GPU and are not reported. A full post-fix re-measurement of all three modes remains the first
+job for the next agent.
 
 How to read it: the keyword answer check is lenient (a fluent sentence often contains the words),
 so **evidence accuracy is the honest signal**. Dock takes ~40 s per run (3 sessions, 3 extraction

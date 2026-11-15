@@ -116,8 +116,14 @@ export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta
   if (!utteranceColumns.has('translation')) db.exec('ALTER TABLE utterances ADD COLUMN translation TEXT');
   if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'when_resolved'))
     db.exec('ALTER TABLE facts ADD COLUMN when_resolved TEXT');
-  if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'about_raw'))
-    db.exec('ALTER TABLE facts ADD COLUMN about_raw TEXT');
+  const factCols = new Set(db.prepare('PRAGMA table_info(facts)').all().map((c) => c.name));
+  if (!factCols.has('about_raw')) db.exec('ALTER TABLE facts ADD COLUMN about_raw TEXT');
+  // UI-facing attributes: how a memory came to exist, where it applies, and when it last shaped an answer
+  if (!factCols.has('origin')) db.exec("ALTER TABLE facts ADD COLUMN origin TEXT NOT NULL DEFAULT 'extracted'");
+  if (!factCols.has('scope')) db.exec("ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'");
+  if (!factCols.has('uses')) db.exec('ALTER TABLE facts ADD COLUMN uses INTEGER NOT NULL DEFAULT 0');
+  if (!factCols.has('last_used')) db.exec('ALTER TABLE facts ADD COLUMN last_used TEXT');
+  // which source facts assembled a person's core card (review fix on main)
   if (!db.prepare('PRAGMA table_info(people)').all().some((c) => c.name === 'core_fact_ids'))
     db.exec('ALTER TABLE people ADD COLUMN core_fact_ids TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS fact_people_person ON fact_people(person_id)');

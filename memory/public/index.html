@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f6f2">
-  <title>Kindred · Input Lab</title>
-  <meta name="description" content="A local workspace for testing what Bonsai remembers.">
+  <title>Kindred · Memory workspace</title>
+  <meta name="description" content="A local workspace for the memories Bonsai keeps about your life.">
   <link rel="stylesheet" href="/lab.css">
   <script src="/lab.js" defer></script>
 </head>
@@ -14,12 +14,12 @@
     <aside class="sidebar" aria-label="Inputs">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>kindred</strong><small>INPUT LAB</small></div>
+        <div><strong>kindred</strong><small>MEMORY WORKSPACE</small></div>
       </div>
 
       <div class="sidebar-main">
         <div class="section-heading"><span>YOUR INPUTS</span><span class="count" id="input-count">0</span></div>
-        <p class="sidebar-intro">Add something you want Bonsai to remember. Your words stay intact as the source.</p>
+        <p class="sidebar-intro">Exact text you typed. It stays the source, verbatim, and is never turned into a Ledger fact on its own.</p>
         <form id="input-form" class="input-form">
           <label for="input-text">New input</label>
           <textarea id="input-text" name="text" rows="5" maxlength="4000" placeholder="Maya asked me to water her tomato plants while she is away."></textarea>
@@ -34,31 +34,82 @@
 
     <main class="main-panel">
       <header class="topbar">
-        <div class="workspace-title"><span class="mini-mark" aria-hidden="true">✳</span><span>Memory workspace</span><span class="topbar-divider">/</span><span class="muted">Input Lab</span></div>
+        <div class="workspace-title"><span class="mini-mark" aria-hidden="true">✳</span><span>Memory workspace</span></div>
+        <nav class="view-tabs" role="tablist" aria-label="Views">
+          <button type="button" role="tab" data-view="chat" aria-selected="true" id="tab-chat">Chat</button>
+          <button type="button" role="tab" data-view="ledger" aria-selected="false" id="tab-ledger">Ledger</button>
+          <button type="button" role="tab" data-view="people" aria-selected="false" id="tab-people">People</button>
+        </nav>
         <div class="topbar-right"><span class="server-status" id="server-status"><span class="status-dot"></span> Checking Bonsai…</span></div>
       </header>
 
-      <div class="conversation" id="conversation" aria-live="polite">
-        <div class="welcome" id="welcome">
-          <div class="welcome-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-          <span class="eyebrow">A PLACE FOR THE THINGS THAT MATTER</span>
-          <h1>Give it something<br>to <em>remember.</em></h1>
-          <p>Save an input, then ask in your own words. Bonsai will search your inputs and show the exact source behind its answer.</p>
-          <div class="try-this"><span>HOW TO TRY IT</span><p>Save “The spare key is under the blue flower pot.” Then ask, “Where did I leave the house key?”</p></div>
+      <section class="view" id="view-chat" role="tabpanel" aria-labelledby="tab-chat">
+        <div class="conversation" id="conversation" aria-live="polite">
+          <div class="welcome" id="welcome">
+            <div class="welcome-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span class="eyebrow">A PLACE FOR THE THINGS THAT MATTER</span>
+            <h1>Ask what it<br><em>remembers.</em></h1>
+            <p>Every answer shows the memories behind it: your inputs, Ledger facts, conversation clips and photos.</p>
+            <div class="try-this"><span>HOW TO TRY IT</span><p>Save “The spare key is under the blue flower pot.” Then ask, “Where did I leave the house key?”</p></div>
+          </div>
+          <div id="messages" class="messages"></div>
         </div>
-        <div id="messages" class="messages"></div>
-      </div>
 
-      <div class="composer-wrap">
-        <form id="ask-form" class="composer">
-          <label for="question" class="sr-only">Ask Bonsai a question</label>
-          <textarea id="question" rows="1" placeholder="Ask Bonsai what it remembers…"></textarea>
-          <button type="submit" id="ask-button" aria-label="Send question"><span aria-hidden="true">↑</span></button>
-        </form>
-        <div class="composer-caption"><span>Bonsai 4B, running locally</span><label for="mode">Retrieval <select id="mode"><option value="">Auto</option><option value="bm25">Keywords</option><option value="hybrid" selected>Bonsai vectors</option><option value="hybrid-rerank">Bonsai + selection</option></select></label></div>
-      </div>
+        <div class="composer-wrap">
+          <form id="ask-form" class="composer">
+            <label for="question" class="sr-only">Ask Bonsai a question</label>
+            <textarea id="question" rows="1" placeholder="Ask Bonsai what it remembers…"></textarea>
+            <button type="submit" id="ask-button" aria-label="Send question"><span aria-hidden="true">↑</span></button>
+          </form>
+          <div class="composer-caption">
+            <span>Bonsai 4B, running locally</span>
+            <label for="mode">Retrieval <select id="mode"><option value="">Auto</option><option value="bm25">Keywords</option><option value="hybrid" selected>Bonsai vectors</option><option value="hybrid-rerank">Bonsai + selection</option></select></label>
+            <button type="button" class="photo-button" id="photo-button">＋ Photo</button>
+            <input type="file" id="photo-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-ledger" role="tabpanel" aria-labelledby="tab-ledger" hidden>
+        <div class="view-head">
+          <div>
+            <h2>Ledger</h2>
+            <p class="view-sub">Everything the assistant keeps about you. Each row names its source.</p>
+          </div>
+          <button type="button" class="quiet-button" id="ledger-add">＋ Add memory</button>
+        </div>
+        <div class="ledger-tools">
+          <input type="search" id="ledger-search" placeholder="Search memories…" aria-label="Search memories">
+          <select id="ledger-person" aria-label="Filter by person"><option value="">Everyone</option></select>
+          <select id="ledger-status" aria-label="Status"><option value="active">Active</option><option value="any">With retired</option></select>
+        </div>
+        <div id="ledger-list" class="ledger-list" aria-live="polite"></div>
+        <p class="empty-note" id="ledger-empty" hidden>No memories match that search.</p>
+      </section>
+
+      <section class="view" id="view-people" role="tabpanel" aria-labelledby="tab-people" hidden>
+        <div class="view-head">
+          <div>
+            <h2>People</h2>
+            <p class="view-sub">Who the assistant knows, and the card it keeps in view for each of them.</p>
+          </div>
+        </div>
+        <div id="people-list" class="people-list" aria-live="polite"></div>
+      </section>
     </main>
   </div>
+
+  <dialog id="action-dialog" class="action-dialog">
+    <form method="dialog" class="dialog-form" id="dialog-form">
+      <h3 id="dialog-title">Confirm</h3>
+      <div id="dialog-body" class="dialog-body"></div>
+      <footer class="dialog-actions">
+        <button type="button" class="quiet-button" id="dialog-cancel">Cancel</button>
+        <button type="submit" class="primary-button" id="dialog-confirm">Confirm</button>
+      </footer>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

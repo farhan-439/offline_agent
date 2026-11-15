@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { openDb } from '../src/db.mjs';
 import { addInput } from '../src/inputs.mjs';
 import { search, hybridSearch } from '../src/retrieve.mjs';
-import { ask } from '../src/recall.mjs';
+import { ask, repairCitations } from '../src/recall.mjs';
 import { createHandler } from '../src/server.mjs';
 
 const model = {
@@ -70,5 +70,41 @@ test('local lab serves the page and accepts inputs through its HTTP API', async 
   assert.equal(listed.json.inputs[0].text, saved.json.text);
   const answer = await request(handler, 'POST', '/ask', { question: 'Where is the house key?', mode: 'hybrid' });
   assert.equal(answer.json.inputs[0].id, 'N1');
+  db.close();
+});
+
+test('answer evidence uses the folder input that actually supports the claim', async () => {
+  const db = openDb(':memory:');
+  const unavailable = { model: 'test-bonsai', async capabilities() { return { embeddings: false, dim: null }; } };
+  await addInput(db, unavailable, 'The yellow folder contains tax receipts; the blue folder contains clinic papers.');
+  await addInput(db, unavailable, 'I put the blue folder in the top desk drawer.');
+  await addInput(db, unavailable, 'My reading glasses are in the fabric pouch in my backpack front pocket.');
+  const scripted = { ...unavailable, async memoryAction() {
+    return { action: 'answer', answer: 'The yellow folder has your tax receipts, and your reading glasses are in the fabric pouch in your backpack front pocket.', cite: ['N2', 'N3'] };
+  } };
+  const result = await ask(db, scripted, 'Which folder has tax receipts and where are my reading glasses?', { mode: 'bm25', persistTrace: false });
+  assert.deepEqual(result.cites, ['N1', 'N3']);
+  assert.deepEqual(result.inputs.map((input) => input.id), ['N1', 'N3']);
+  assert.deepEqual(repairCitations('The red folder contains tax receipts.', 'Which folder has tax receipts?', [], [
+    { ref: 'N1', text: 'The blue folder contains clinic papers. The yellow folder contains tax receipts. The red folder contains travel documents.' },
+  ]), [], 'words from different sentences must not be combined into false evidence');
+  db.close();
+});
+
+test('an unsupported event date is not returned by the final fallback', async () => {
+  const db = openDb(':memory:');
+  const unavailable = { model: 'test-bonsai', async capabilities() { return { embeddings: false, dim: null }; } };
+  await addInput(db, unavailable, 'I ordered a replacement kettle, order number KT-9042.');
+  await addInput(db, unavailable, 'The kettle delivery was expected on November 21, 2026.');
+  await addInput(db, unavailable, 'The courier left the kettle package with building manager Tomas, not at my door.');
+  const scripted = { ...unavailable,
+    async memoryAction() { return { action: 'answer', answer: 'The courier left it with Tomas on November 15, 2026.', cite: ['N2'] }; },
+    async json({ name }) { if (name === 'final_answer') return { answer: 'The courier left it with Tomas on November 15, 2026.', cite: [] }; throw new Error(name); },
+  };
+  const result = await ask(db, scripted, 'When did the courier leave the replacement kettle?', { mode: 'bm25', persistTrace: false });
+  assert.doesNotMatch(result.answer, /November 15/);
+  assert.match(result.answer, /can't verify when/i);
+  assert.deepEqual(result.cites, ['N3']);
+  assert.equal(result.grounded, true);
   db.close();
 });

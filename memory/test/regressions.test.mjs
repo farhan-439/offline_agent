@@ -383,6 +383,58 @@ test('recall proposes a reminder but never applies it', async () => {
   assert.equal(db.prepare('SELECT count(*) n FROM reminders').get().n, 0);
 });
 
+test('a paging loop that ends without text still answers from the loaded pages', async () => {
+  const { db } = await docked();
+  const fake = { async json({ name }) {
+    if (name === 'recall_step') return { action: 'search', query: 'lisinopril', person: null, episode: null, answer: null, cite: [] };
+    if (name === 'final_answer') return { answer: 'Lisinopril was raised to ten milligrams.', cite: [] };
+    throw new Error(name);
+  } };
+  const r = await ask(db, fake, 'What is my lisinopril dose?');
+  assert.match(r.answer, /ten milligrams/);
+  assert.ok(r.trace.some((t) => t.step === 'fallback'));
+});
+
+test('the Ledger can list memories with their source, and an explicit save is a user memory', async () => {
+  const { db } = await docked();
+  const handler = createHandler(db, { async json() { throw new Error('no model needed'); } });
+  const list = await call(handler, 'GET', '/memories?limit=50');
+  assert.equal(list.status, 200);
+  assert.ok(list.payload.memories.length >= 5);
+  const allergy = list.payload.memories.find((m) => /peanut/i.test(m.text));
+  assert.equal(allergy.origin, 'extracted');
+  assert.equal(allergy.scope, 'all');
+  assert.equal(allergy.person.name, 'Lily');
+  assert.equal(allergy.source.quote.text.includes('peanut'), true, 'the card must carry the original words');
+  assert.ok(allergy.source.utterances.includes('d2-call#0004'));
+
+  const saved = await call(handler, 'POST', '/memory', { text: 'Prefers short answers with no preamble.', person: 'Me', kind: 'preference' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.payload.memory.origin, 'user');
+  assert.equal(saved.payload.memory.source.quote, null, 'a user memory has no utterance to cite');
+  const search = await call(handler, 'GET', '/memories?q=preamble');
+  assert.ok(search.payload.memories.some((m) => m.origin === 'user' && /preamble/.test(m.text)));
+  const byPerson = await call(handler, 'GET', '/memories?person=Me');
+  assert.ok(byPerson.payload.memories.some((m) => /preamble/.test(m.text)));
+  const filtered = await call(handler, 'GET', '/memories?person=Lily');
+  assert.equal(filtered.payload.memories.some((m) => /preamble/.test(m.text)), false, 'scoping must not leak across people');
+});
+
+test('citation usage is counted only when a memory shapes an answer', async () => {
+  const { db } = await docked();
+  const fact = db.prepare("SELECT rowid FROM facts WHERE text LIKE '%Allergic to peanuts%'").get();
+  const ref = `F${fact.rowid}`;
+  assert.equal(db.prepare('SELECT uses FROM facts WHERE rowid = ?').get(fact.rowid).uses, 0);
+  const fake = { async json({ name }) {
+    if (name === 'recall_step') return { action: 'answer', answer: 'Lily is allergic to peanuts.', cite: [ref] };
+    throw new Error(name);
+  } };
+  await ask(db, fake, 'Who is allergic to peanuts?');
+  const row = db.prepare('SELECT uses, last_used FROM facts WHERE rowid = ?').get(fact.rowid);
+  assert.equal(row.uses, 1);
+  assert.ok(row.last_used);
+});
+
 test('a pending action requires confirmation and a failed action remains pending', async () => {
   const { db } = await docked();
   const reminder = proposeAction(db, { kind: 'set_reminder', text: 'Call Maya' });
