@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<rect width="1920" height="1080" fill="#F6F3EC"/>
+<defs>
+  <radialGradient id="g1" cx="12%" cy="6%" r="72%"><stop offset="0%" stop-color="#2F6B57" stop-opacity="0.13"/><stop offset="55%" stop-color="#2F6B57" stop-opacity="0.04"/><stop offset="100%" stop-color="#2F6B57" stop-opacity="0"/></radialGradient>
+  <radialGradient id="g2" cx="96%" cy="98%" r="66%"><stop offset="0%" stop-color="#A9702C" stop-opacity="0.10"/><stop offset="60%" stop-color="#A9702C" stop-opacity="0.03"/><stop offset="100%" stop-color="#A9702C" stop-opacity="0"/></radialGradient>
+  <radialGradient id="fade" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff" stop-opacity="0.85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  <mask id="dotsMask"><rect width="1920" height="1080" fill="url(#fade)"/></mask>
+  <pattern id="dots" width="13" height="13" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#2F6B57" fill-opacity="0.13"/></pattern>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0 H0 V48" fill="none" stroke="#16221E" stroke-opacity="0.028" stroke-width="1"/></pattern>
+</defs>
+<rect width="1920" height="1080" fill="url(#g1)"/>
+<rect width="1920" height="1080" fill="url(#g2)"/>
+<rect width="1920" height="1080" fill="url(#grid)"/>
+<g mask="url(#dotsMask)"><rect width="1920" height="1080" fill="url(#dots)"/></g>
+<text x="88" y="88" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12" letter-spacing="2.6" fill="#2F6B57">KINDRED · LOCAL MEMORY ARCHITECTURE</text>
+<text x="88" y="148" font-family="Georgia, Charter, serif" font-size="47" fill="#16221E">A private memory that shows its receipts</text>
+<text x="88" y="181" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="15.5" fill="#5B655F">Speech in, grounded memory out. Every answer cites the sentence and the recording it came from.</text>
+<g>
+  <rect x="1492" y="66" width="164" height="30" rx="15" fill="#E4EDE7" stroke="none"/>
+  <circle cx="1514" cy="81" r="3.6" fill="#2F6B57"/>
+  <text x="1526" y="85" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12" font-weight="600" fill="#2F6B57">OFFLINE · Wi-Fi off</text>
+  <rect x="1668" y="66" width="164" height="30" rx="15" fill="none" stroke="#E1DED3"/>
+  <text x="1684" y="85" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12" fill="#5B655F">Bonsai 2 · 4B</text>
+</g>
+<line x1="88" y1="204" x2="1832" y2="204" stroke="#E1DED3"/>
+<g>
+<rect x="88" y="236" width="296" height="156" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<rect x="88" y="236" width="296" height="4" rx="2" fill="#2F6B57"/>
+<text x="108" y="270" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">STEP 1</text>
+<text x="108" y="298" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="19" font-weight="600" fill="#16221E">Capture</text>
+<text x="108" y="320" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.5" letter-spacing="0.6" fill="#2F6B57">ARGMAX · APPLE SILICON</text>
+<text x="108" y="344" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Speech → words + speaker turns</text>
+<text x="108" y="362" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Voiceprint per speaker cluster</text>
+</g><g>
+<rect x="424" y="236" width="296" height="156" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<rect x="424" y="236" width="296" height="4" rx="2" fill="#2F6B57"/>
+<text x="444" y="270" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">STEP 2</text>
+<text x="444" y="298" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="19" font-weight="600" fill="#16221E">Contract</text>
+<text x="444" y="320" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.5" letter-spacing="0.6" fill="#2F6B57">SESSION.JSONL</text>
+<text x="444" y="344" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">One line per utterance; audio offsets.</text>
+<text x="444" y="362" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Unknown fields are ignored.</text>
+</g><g>
+<rect x="760" y="236" width="296" height="156" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<rect x="760" y="236" width="296" height="4" rx="2" fill="#2F6B57"/>
+<text x="780" y="270" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">STEP 3</text>
+<text x="780" y="298" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="19" font-weight="600" fill="#16221E">Dock</text>
+<text x="780" y="320" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.5" letter-spacing="0.6" fill="#2F6B57">BONSAI 4B · BATCH</text>
+<text x="780" y="344" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Extract, ground, name, merge.</text>
+<text x="780" y="362" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Runs once, at home.</text>
+</g><g>
+<rect x="1096" y="236" width="296" height="156" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<rect x="1096" y="236" width="296" height="4" rx="2" fill="#2F6B57"/>
+<text x="1116" y="270" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">STEP 4</text>
+<text x="1116" y="298" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="19" font-weight="600" fill="#16221E">Store</text>
+<text x="1116" y="320" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.5" letter-spacing="0.6" fill="#2F6B57">SQLITE · ON DISK</text>
+<text x="1116" y="344" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Transcript, episodes, facts,</text>
+<text x="1116" y="362" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">core cards, photos, vectors.</text>
+</g><g>
+<rect x="1432" y="236" width="296" height="156" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<rect x="1432" y="236" width="296" height="4" rx="2" fill="#2F6B57"/>
+<text x="1452" y="270" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">STEP 5</text>
+<text x="1452" y="298" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="19" font-weight="600" fill="#16221E">Recall</text>
+<text x="1452" y="320" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.5" letter-spacing="0.6" fill="#2F6B57">BONSAI 4B · ONLINE</text>
+<text x="1452" y="344" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">Shortlist → select → page →</text>
+<text x="1452" y="362" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" fill="#5B655F">answer with checked citations.</text>
+</g><g stroke="#16221E" stroke-opacity="0.28" stroke-width="1.4" fill="none"><line x1="391" y1="314.0" x2="408" y2="314.0"/><path d="M 402 309.0 L 410 314.0 L 402 319.0"/></g><g stroke="#16221E" stroke-opacity="0.28" stroke-width="1.4" fill="none"><line x1="727" y1="314.0" x2="744" y2="314.0"/><path d="M 738 309.0 L 746 314.0 L 738 319.0"/></g><g stroke="#16221E" stroke-opacity="0.28" stroke-width="1.4" fill="none"><line x1="1063" y1="314.0" x2="1080" y2="314.0"/><path d="M 1074 309.0 L 1082 314.0 L 1074 319.0"/></g><g stroke="#16221E" stroke-opacity="0.28" stroke-width="1.4" fill="none"><line x1="1399" y1="314.0" x2="1416" y2="314.0"/><path d="M 1410 309.0 L 1418 314.0 L 1410 319.0"/></g>
+<g><rect x="88" y="430" width="846" height="306" rx="14" fill="rgba(255,255,255,0.72)" stroke="#E1DED3"/>
+<text x="112" y="467" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="15.5" font-weight="600" fill="#16221E">DOCK · builds the memory</text>
+<text x="910" y="467" text-anchor="end" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="10.5" letter-spacing="1.2" fill="#7C867F">WRITE PATH</text>
+<text x="112" y="498" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">01</text>
+<text x="144" y="498" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Filter &amp; segment</text>
+<text x="144" y="514" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Filler dropped; 45 s / 260-word topics. No model yet.</text>
+<text x="112" y="536" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">02</text>
+<text x="144" y="536" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Extract</text>
+<text x="144" y="552" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">JSON-schema facts, each with an utterance id.</text>
+<text x="112" y="574" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">03</text>
+<text x="144" y="574" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Ground</text>
+<text x="144" y="590" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">No cited sentence → no memory. Rejected, not guessed.</text>
+<text x="112" y="612" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">04</text>
+<text x="144" y="612" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Name</text>
+<text x="144" y="628" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Self-introduction only; validated; voiceprint bound.</text>
+<text x="112" y="650" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">05</text>
+<text x="144" y="650" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Merge</text>
+<text x="144" y="666" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Duplicates skipped; changed numbers supersede.</text>
+<text x="112" y="688" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">06</text>
+<text x="144" y="688" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Card</text>
+<text x="144" y="704" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">≤50 words per person, assembled from their facts.</text>
+</g><g><rect x="978" y="430" width="846" height="306" rx="14" fill="rgba(255,255,255,0.72)" stroke="#E1DED3"/>
+<text x="1002" y="467" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="15.5" font-weight="600" fill="#16221E">RECALL · answers with evidence</text>
+<text x="1800" y="467" text-anchor="end" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="10.5" letter-spacing="1.2" fill="#7C867F">READ PATH</text>
+<text x="1002" y="498" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">01</text>
+<text x="1034" y="498" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Probe</text>
+<text x="1034" y="514" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">/v1/embeddings → keywords, vectors, or vectors + selection.</text>
+<text x="1002" y="536" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">02</text>
+<text x="1034" y="536" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Shortlist</text>
+<text x="1034" y="552" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">BM25 + Bonsai vectors, fused into one ranked pool.</text>
+<text x="1002" y="574" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">03</text>
+<text x="1034" y="574" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Select</text>
+<text x="1034" y="590" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Bonsai keeps ≤6 pages, with one hit per question part.</text>
+<text x="1002" y="612" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">04</text>
+<text x="1034" y="612" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Page</text>
+<text x="1034" y="628" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">2,400-char context, ≤4 rounds, oldest page evicted.</text>
+<text x="1002" y="650" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">05</text>
+<text x="1034" y="650" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Answer</text>
+<text x="1034" y="666" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Citations verified against pages actually loaded.</text>
+<text x="1002" y="688" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" fill="#7C867F">06</text>
+<text x="1034" y="688" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="600" fill="#16221E">Fallback</text>
+<text x="1034" y="704" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.8" fill="#5B655F">Answer from loaded pages; refuse rather than invent.</text>
+</g>
+<text x="88" y="762" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12" letter-spacing="2.2" fill="#2F6B57">WHAT IS WORKING TODAY</text>
+<text x="88" y="788" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.4" fill="#7C867F">Covered by 42 scripted policy tests and live runs on the real 4B.</text><g><circle cx="88" cy="828" r="6.4" fill="#E4EDE7"/><path d="M 84.9 828 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="104" y="832" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Grounded identity</text><text x="104" y="848" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">names validated; self-intros bind voices</text><g><circle cx="528" cy="828" r="6.4" fill="#E4EDE7"/><path d="M 524.9 828 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="544" y="832" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Multi-person facts</text><text x="544" y="848" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">“Sam with Lily” found from either person</text><g><circle cx="88" cy="882" r="6.4" fill="#E4EDE7"/><path d="M 84.9 882 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="104" y="886" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Dedupe &amp; supersede</text><text x="104" y="902" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">5 mg → 10 mg retires the old fact</text><g><circle cx="528" cy="882" r="6.4" fill="#E4EDE7"/><path d="M 524.9 882 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="544" y="886" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Verified citations</text><text x="544" y="902" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">answer cannot cite a page it never saw</text><g><circle cx="88" cy="936" r="6.4" fill="#E4EDE7"/><path d="M 84.9 936 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="104" y="940" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Photo memory</text><text x="104" y="956" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">upload → vision → searchable, cites image</text><g><circle cx="528" cy="936" r="6.4" fill="#E4EDE7"/><path d="M 524.9 936 l 2.2 2.3 l 4.1 -4.4" stroke="#2F6B57" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g><text x="544" y="940" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.8" font-weight="600" fill="#16221E">Two-step actions</text><text x="544" y="956" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#5B655F">forget / correct / remind need confirmation</text>
+<g><rect x="1000" y="740" width="832" height="206" rx="14" fill="#FFFFFF" stroke="#E1DED3"/>
+<text x="1024" y="760" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11" letter-spacing="1.6" fill="#7C867F">MEASURED · 10 FIXTURE QUESTIONS × 3 RUNS</text>
+<text x="1024" y="782" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.2" fill="#7C867F">answer correct / expected evidence cited · median latency</text><text x="1024" y="814" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="500" fill="#16221E">Keywords (BM25)</text><text x="1340" y="814" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#16221E">29/30</text><text x="1450" y="814" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">23/30</text><text x="1580" y="814" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">2.8 s</text><text x="1024" y="840" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="500" fill="#16221E">+ Bonsai vectors</text><text x="1340" y="840" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#16221E">27/30</text><text x="1450" y="840" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">23/30</text><text x="1580" y="840" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">5.8 s</text><text x="1024" y="866" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.6" font-weight="500" fill="#16221E">+ Bonsai selection</text><text x="1340" y="866" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#16221E">24/30</text><text x="1450" y="866" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">22/30</text><text x="1580" y="866" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.4" fill="#5B655F">6.1 s</text><line x1="1024" y1="896" x2="1808" y2="896" stroke="#E1DED3"/><text x="1024" y="918" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.2" fill="#A9702C">Not yet: streaming recall, inferred-fact approval, scope enforcement, real capture voiceprints.</text></g>
+<line x1="88" y1="1010" x2="1832" y2="1010" stroke="#E1DED3"/>
+<text x="88" y="1040" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#7C867F">branch bionic/bonsai-memory · 42 scripted policy tests · single 4B process (chat + vision + embeddings, 2,560-dim)</text>
+<text x="1832" y="1040" text-anchor="end" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="11.4" fill="#7C867F">No cloud · no second model · no 9B · every request on 127.0.0.1</text>
+</svg>
