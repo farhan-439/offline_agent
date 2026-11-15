@@ -1,0 +1,13 @@
+{
+  "name": "kindred-capture-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node bridge to the long-lived kindred-capture serve process (Argmax)",
+  "engines": { "node": ">=24" },
+  "main": "bridge.mjs",
+  "scripts": {
+    "build": "swift build -c release",
+    "test": "node --test test/*.test.mjs"
+  }
+}

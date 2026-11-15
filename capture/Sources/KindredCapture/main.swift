@@ -2,15 +2,17 @@
 //
 //   kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out data/inbox]
 //       transcribe (WhisperKit) + diarize (SpeakerKit) → session JSONL per docs/CONTRACT.md
+//   kindred-capture record [--session ID] [--place TEXT] [--out data/inbox] [--audio-dir data/audio] [--seconds N]
+//       record the mic until Enter (or N seconds), save the WAV, then process it as above
 //   kindred-capture speak "<text>"
 //       say a line with TTSKit (Qwen3-TTS, voice "ryan")
+//   kindred-capture serve [--out data/inbox] [--audio-dir data/audio] [--no-tts 1]
+//       long-lived JSON-lines server (models load once); see Server.swift / bridge.mjs
 //
-// Base version: file-based. Live mic capture, streaming, and voiceprints (Argmax Pro) come next;
-// see capture/README.md for the task list.
+// Models load from local folders (see Models.swift) so all of this works with Wi-Fi off.
+// Voiceprints (Argmax Pro) and live streaming speaker events come next; see capture/README.md.
 import Foundation
 import WhisperKit
-import SpeakerKit
-import TTSKit
 
 struct Args {
     var positional: [String] = []
@@ -25,101 +27,71 @@ struct Args {
     }
 }
 
-func emit(_ obj: [String: Any?], to handle: FileHandle) throws {
-    let clean = obj.compactMapValues { $0 }
-    var data = try JSONSerialization.data(withJSONObject: clean, options: [.sortedKeys, .withoutEscapingSlashes])
-    data.append(0x0A)
-    handle.write(data)
-}
-
-func iso(_ d: Date) -> String { ISO8601DateFormatter().string(from: d) }
-
-func env(_ k: String) -> String? { ProcessInfo.processInfo.environment[k].flatMap { $0.isEmpty ? nil : $0 } }
-
-/// WhisperKit: offline if KINDRED_WHISPER_MODEL points to a downloaded model folder.
-func makeWhisper() async throws -> WhisperKit {
-    if let folder = env("KINDRED_WHISPER_MODEL") {
-        return try await WhisperKit(WhisperKitConfig(modelFolder: folder, verbose: false, download: false))
-    }
-    return try await WhisperKit(WhisperKitConfig(model: env("KINDRED_WHISPER_VARIANT") ?? "base.en", verbose: false))
-}
+enum CaptureError: Error { case usage }
 
 func process(_ args: Args) async throws {
     guard let audioPath = args.positional.dropFirst().first else { throw CaptureError.usage }
-    let session = args.flags["session"] ?? iso(Date()).replacingOccurrences(of: ":", with: "-")
-    let outDir = URL(fileURLWithPath: args.flags["out"] ?? "data/inbox")
-    try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-    let outURL = outDir.appendingPathComponent("\(session).jsonl")
-    FileManager.default.createFile(atPath: outURL.path, contents: nil)
-    let out = try FileHandle(forWritingTo: outURL)
-    defer { try? out.close() }
-
-    let started = Date()
-    try emit(["type": "session_start", "session": session, "startedAt": iso(started), "place": args.flags["place"]], to: out)
-
+    async let w = loadWhisper()
+    async let s = loadSpeakerKit()
+    let (whisper, speakers) = try await (w, s)
     let audio = try AudioProcessor.loadAudioAsFloatArray(fromPath: audioPath)
-    FileHandle.standardError.write("audio: \(String(format: "%.1f", Double(audio.count) / 16000)) s\n".data(using: .utf8)!)
+    _ = try await writeSession(audio: audio, audioPath: audioPath, session: args.flags["session"] ?? sessionId(), place: args.flags["place"],
+                               startedAt: Date(), outDir: URL(fileURLWithPath: args.flags["out"] ?? "data/inbox"), whisper: whisper, speakers: speakers)
+}
 
-    async let transcription: [TranscriptionResult] = {
-        let whisper = try await makeWhisper()
-        return try await whisper.transcribe(audioArray: audio, decodeOptions: DecodingOptions(wordTimestamps: true))
-    }()
-    async let diarization: DiarizationResult = {
-        let speakers = try await SpeakerKit()
-        return try await speakers.diarize(audioArray: audio)
-    }()
-    let (t, d) = try await (transcription, diarization)
-
-    // Merge: SpeakerKit assigns a speaker to each word, grouped into speaker-homogeneous segments.
-    var n = 0
-    var seconds: [Int: Float] = [:]
-    for segments in d.addSpeakerInfo(to: t) {
-        for seg in segments {
-            let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, let sid = seg.speaker.speakerId else { continue }
-            n += 1
-            seconds[sid, default: 0] += seg.endTime - seg.startTime
-            try emit([
-                "type": "utterance", "session": session, "id": String(format: "%@#%04d", session, n),
-                "speaker": "S\(sid)", "start": Double(seg.startTime), "end": Double(seg.endTime),
-                "text": text, "audio": audioPath,
-            ], to: out)
-        }
-    }
-    // Voiceprints: the open-source SpeakerKit does not expose speaker embeddings.
-    // TODO(capture): fill `voiceprint` from Argmax Pro so memory can recognise people across sessions.
-    for (sid, secs) in seconds.sorted(by: { $0.key < $1.key }) {
-        try emit(["type": "speaker", "session": session, "speaker": "S\(sid)", "voiceprint": NSNull(), "seconds": Double(secs), "final": true], to: out)
-    }
-    try emit(["type": "session_end", "session": session, "endedAt": iso(Date())], to: out)
-    FileHandle.standardError.write("wrote \(n) utterances, \(seconds.count) speakers → \(outURL.path)\n".data(using: .utf8)!)
+func record(_ args: Args) async throws {
+    // Load models while the mic runs, so processing starts as soon as recording ends.
+    async let w = loadWhisper()
+    async let s = loadSpeakerKit()
+    let session = args.flags["session"] ?? sessionId()
+    let maxSeconds = Double(args.flags["seconds"] ?? "3600") ?? 3600
+    let started = Date()
+    let stop = StopFlag(false)
+    let mic = try await openMic(simulate: args.flags["simulate"], onLive: { Out.log("● recording on \($0) — press Enter to stop") },
+                                onFallback: { Out.log("\($0) sent only silence; switched to \($1)") })
+    FileHandle.standardInput.readabilityHandler = { h in if !h.availableData.isEmpty { stop.set(true) } }
+    while !stop.get() && !mic.finished.get() && Date().timeIntervalSince(started) < maxSeconds { try await Task.sleep(nanoseconds: 100_000_000) }
+    FileHandle.standardInput.readabilityHandler = nil
+    try await Task.sleep(nanoseconds: 150_000_000)
+    let audio = mic.stop()
+    guard mic.live.get() else { throw Failure(message: "No microphone sent any sound. Pick a working input in System Settings › Sound.") }
+    let wav = URL(fileURLWithPath: args.flags["audio-dir"] ?? "data/audio").appendingPathComponent("\(session).wav")
+    try writeWAV(audio, sampleRate: 16000, to: wav)
+    Out.log("saved \(wav.path)")
+    let (whisper, speakers) = try await (w, s)
+    _ = try await writeSession(audio: audio, audioPath: wav.path, session: session, place: args.flags["place"],
+                               startedAt: started, outDir: URL(fileURLWithPath: args.flags["out"] ?? "data/inbox"), whisper: whisper, speakers: speakers)
 }
 
 func speak(_ args: Args) async throws {
-    let text = args.positional.dropFirst().joined(separator: " ")
+    let text = args.positional.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { throw CaptureError.usage }
-    let tts: TTSKit
-    if let folder = env("KINDRED_TTS_MODEL") {
-        tts = try await TTSKit(modelFolder: URL(fileURLWithPath: folder))
-    } else {
-        tts = try await TTSKit()
-    }
-    _ = try await tts.play(text: text, speaker: Qwen3Speaker(rawValue: env("KINDRED_VOICE") ?? "ryan") ?? .ryan)
+    let tts = try await loadTTS()
+    _ = try await tts.play(text: String(text.prefix(240)), speaker: voice(), language: .english, options: whisperLineOptions(chars: text.count))
 }
-
-enum CaptureError: Error { case usage }
 
 let args = Args(Array(CommandLine.arguments.dropFirst()))
 do {
     switch args.positional.first {
-    case "process": try await process(args)
+    case "process": await setupPro(); try await process(args)
+    case "record": await setupPro(); try await record(args)
     case "speak": try await speak(args)
+    case "serve": await setupPro(); try await serve(args)
+    case "license": await printLicense()
+    case "provision": try await provision()
     default: throw CaptureError.usage
     }
 } catch CaptureError.usage {
-    FileHandle.standardError.write("usage: kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR]\n       kindred-capture speak \"text\"\n".data(using: .utf8)!)
+    Out.log("""
+    usage: kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR]
+           kindred-capture record [--session ID] [--place TEXT] [--out DIR] [--audio-dir DIR] [--seconds N] [--simulate file.wav]
+           kindred-capture speak "text"
+           kindred-capture serve [--out DIR] [--audio-dir DIR] [--no-tts 1]
+           kindred-capture license      (Argmax Pro status; run once online before going Wi-Fi off)
+           kindred-capture provision    (download all models once, with Wi-Fi on)
+    """)
     exit(2)
 } catch {
-    FileHandle.standardError.write("error: \(error)\n".data(using: .utf8)!)
+    Out.log("error: \(error.localizedDescription)")
     exit(1)
 }

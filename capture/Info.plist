@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.kindred.capture</string><key>CFBundleName</key><string>Kindred Capture</string><key>NSMicrophoneUsageDescription</key><string>Kindred records conversations for private, on-device transcription and memory.</string></dict></plist>

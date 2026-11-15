@@ -294,3 +294,47 @@ test('local service identifies a voice from docked memory without a Bonsai call'
   assert.equal(output.name, 'Maya');
   assert.match(output.whisper, /^This is Maya/);
 });
+
+test('local service lists docked people read-only', async () => {
+  const { db } = await dockedDb();
+  const handler = createHandler(db, { async json() { throw new Error('Bonsai should not run for people'); } });
+  const req = Readable.from([]);
+  Object.assign(req, { method: 'GET', url: '/people' });
+  let status, output;
+  await handler(req, { writeHead(code) { status = code; }, end(text) { output = JSON.parse(text); } });
+  assert.equal(status, 200);
+  const maya = output.people.find((p) => p.name === 'Maya');
+  assert.ok(maya, 'Maya is listed');
+  assert.equal(maya.relation, 'neighbour');
+  assert.equal(maya.owner, false);
+  assert.ok(maya.facts > 0);
+  assert.equal(typeof maya.core, 'string');
+  assert.equal(output.people[0].owner, true, 'owner first');
+  assert.ok(Array.isArray(output.relations));
+});
+
+test('local service enrolls the owner voice, then recognises it as the owner', async () => {
+  const { db } = await dockedDb();
+  const handler = createHandler(db, { async json() { throw new Error('Bonsai should not run for enroll-owner'); } });
+  const call = async (url, body) => {
+    const req = Readable.from([JSON.stringify(body)]);
+    Object.assign(req, { method: 'POST', url });
+    let status, output;
+    await handler(req, { writeHead(code) { status = code; }, end(text) { output = JSON.parse(text); } });
+    return { status, output };
+  };
+  const owner = db.prepare('SELECT v.samples FROM voices v JOIN people p ON p.id = v.person_id WHERE p.is_owner = 1').get();
+  const mine = [0.95, 0.05, 0.04, 0.02, 0.14, 0.02, 0.08, 0.03]; // close to the fixture owner, like a real re-enrollment
+  const first = await call('/enroll-owner', { voiceprint: mine });
+  assert.equal(first.status, 200);
+  assert.equal(first.output.samples, (owner?.samples ?? 0) + 1, 'one more sample folded into the owner voice');
+  const again = await call('/enroll-owner', { voiceprint: mine });
+  assert.equal(again.output.samples, first.output.samples + 1);
+  assert.equal(again.output.personId, first.output.personId, 'same owner, no duplicate person');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people WHERE is_owner = 1').get().n, 1);
+  const who = await call('/identify', { speaker: 'L1', voiceprint: mine });
+  assert.equal(who.output.owner, true);
+  assert.equal(who.output.whisper, null, 'the owner is never whispered');
+  assert.equal((await call('/enroll-owner', { voiceprint: 'nope' })).status, 400);
+  assert.equal((await call('/enroll-owner', { voiceprint: [] })).status, 400);
+});
