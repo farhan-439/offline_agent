@@ -17,12 +17,16 @@
 
     <section id="island" class="island" aria-live="polite">
       <p id="island-line" class="island-line">Listening…</p>
+      <ul id="island-lines" class="island-lines" hidden></ul>
       <div id="subs" class="subs" role="group" aria-label="What should Pebble do?">
         <button type="button" class="sub" data-kind="record"><span class="glyph" aria-hidden="true">●</span>Record</button>
         <button type="button" class="sub" data-kind="translate"><span class="glyph" aria-hidden="true">文A</span>Translate</button>
         <button type="button" class="sub" data-kind="ask"><span class="glyph" aria-hidden="true">?</span>Ask</button>
       </div>
-      <button id="island-stop" class="sub stop" type="button" hidden>Stop</button>
+      <div id="live-actions" class="live-actions" hidden>
+        <button id="reply-btn" class="sub reply" type="button" hidden>Reply</button>
+        <button id="island-stop" class="sub stop" type="button" hidden>Stop</button>
+      </div>
     </section>
   </div>
 

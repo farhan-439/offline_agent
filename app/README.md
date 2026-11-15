@@ -50,3 +50,17 @@ Measured on synthetic voices (11/14): an owner enrolled from 12 s of reading was
 ## Live translation (orb → Live translation)
 
 Starts a recording with `translate: true` (`KindredApp.startRecording({ mode: 'translate' })`). Capture sends live `{"event":"translation","seq","language","text","translation",…}` events. Each one is shown on the orb card (original in grey, English large; the latest four) and its English is spoken in order through Argmax TTS, so use earbuds. A repeated `seq` replaces the earlier line. On stop, the session is saved to memory like any conversation, with `language` and `translation` on each line, so later questions can be answered from it. The capture side is in `capture/` (see its README).
+
+## Two-way: Reply (German, Chinese, Spanish, French)
+
+During **Live translation**, once Kindred has heard one of these four languages, a **🎙 Reply in French** button appears (or German, Chinese, Spanish). Press it, say your reply in English, then press **Done**.
+1. Capture cuts your reply out of the live recording (`reply-start` / `reply-stop`) and transcribes it with English Whisper.
+2. Bonsai 4B translates it (`app/translate.mjs`, a strict interpreter prompt with one worked example, temperature 0).
+3. Argmax TTSKit says it **out loud** in that language (`speak` with `language`).
+
+The card shows "You: …" and what they heard. The reply targets the most recent supported language Kindred heard.
+- **No echo:** live translation ignores the mic while you reply and while Kindred speaks (+0.6 s), so Kindred never translates its own French back to you.
+- **Use the laptop speaker for two-way.** The other person has to hear the reply, and macOS plays through one output device at a time.
+- **Why only these four languages:** in the 11/15 feasibility test, Italian, Portuguese, Japanese, Korean and Russian too often got allergens, days, or "who is speaking" wrong. See `capture/README.md`.
+- **Measured end to end (11/15, simulated mic, real models):** your English transcribed in 0.15–0.5 s; Bonsai translated in 1.1–2.4 s; Argmax's first sound comes about 0.7 s after generation starts, so expect about 3–4 s from **Done** to hearing it.
+- **Beta:** a small model translates, so double-check anything medical (allergies, doses).

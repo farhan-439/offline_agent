@@ -6,6 +6,7 @@
 import http from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { translateReply, replyLanguage, REPLY_LANGUAGES } from './translate.mjs';
 import { pathToFileURL } from 'node:url';
 
 export const MEMORY_DOWN = 'Memory server not running. Start it: cd memory && npm run server';
@@ -57,7 +58,9 @@ export class KindredApp {
     fetchImpl = localFetch,
     bridgeOptions = {},
     emit = () => {},
+    translate = translateReply,
   }) {
+    this.translate = translate;
     this.repoRoot = repoRoot;
     this.purgeAskTemps();
     this.memoryUrl = memoryUrl.replace(/\/$/, '');
@@ -221,6 +224,66 @@ export class KindredApp {
     }
   }
 
+  // ---------- two-way: reply in their language ----------
+  /** The language to reply in: the most recent one Kindred heard that replies support (de/zh/es/fr). */
+  replyTarget() {
+    for (const t of [...(this.recording.translations || [])].reverse()) {
+      const lang = replyLanguage(t.language);
+      if (lang) return lang;
+    }
+    return null;
+  }
+
+  setReply(patch) {
+    this.recording = { ...this.recording, reply: { ...this.recording.reply, ...patch } };
+    this.changed();
+  }
+
+  /** Start recording the owner's English reply (cut from the live translation recording). */
+  async startReply() {
+    const rec = this.recording;
+    if (rec.mode !== 'translate' || rec.phase !== 'recording') throw new Error('Reply works during Live translation.');
+    if (rec.reply.phase !== 'idle') throw new Error('Finish the current reply first.');
+    const language = this.replyTarget();
+    if (!language) throw new Error(`Reply works once Kindred has heard ${Object.values(REPLY_LANGUAGES).join(', ').replace('Simplified ', '')}.`);
+    this.bridge.stopSpeaking();
+    this.setReply({ phase: 'listening', language, english: null, translated: null, error: null });
+    try { await this.bridge.replyStart(); } catch (e) { this.setReply({ phase: 'idle', error: e.message }); throw e; }
+    return { language };
+  }
+
+  /** Done speaking: transcribe (Argmax) → translate (Bonsai) → say it in their language (Argmax). */
+  async stopReply() {
+    const { phase, language } = this.recording.reply;
+    if (phase !== 'listening') return false;
+    let english = null, translated = null;
+    try {
+      this.setReply({ phase: 'transcribing' });
+      english = (await this.bridge.replyStop()).text;
+      this.setReply({ phase: 'translating', english });
+      const t0 = Date.now();
+      translated = (await this.translate(english, language)).translation;
+      const item = { kind: 'reply', language, english, translated, at: Date.now(), translateMs: Date.now() - t0 };
+      this.recording = { ...this.recording, replies: [...this.recording.replies, item].slice(-MAX_TRANSLATIONS) };
+      this.emit('reply', item);
+      this.setReply({ phase: 'speaking', translated });
+      // After any English translations still queued, so the two voices don't overlap.
+      await (this.translationSpeech || Promise.resolve());
+      await this.bridge.speakIn(translated, language);
+      this.setReply({ phase: 'idle', error: null });
+      return item;
+    } catch (e) {
+      this.setReply({ phase: 'idle', error: /didn't|reply/i.test(e.message) ? e.message : `Reply failed: ${e.message}`, english, translated });
+      return null;
+    }
+  }
+
+  cancelReply() {
+    if (this.recording.reply.phase === 'listening') this.bridge.replyCancel().catch(() => {});
+    this.setReply({ phase: 'idle' });
+    return true;
+  }
+
   // ---------- record ----------
   startRecording({ place, mode = 'conversation' } = {}) {
     if (this.recordingTask || this.askListeningTask) throw new Error('Already recording.');
@@ -322,7 +385,10 @@ export class KindredApp {
     return this.recording.last;
   }
 
-  stopRecording() { return this.bridge.stopRecording(); }
+  stopRecording() {
+    if (this.recording.reply?.phase === 'listening') this.cancelReply();
+    return this.bridge.stopRecording();
+  }
   cancelRecording() { this.bridge.cancelRecording(); return true; }
 
   // ---------- dock / people ----------
@@ -330,6 +396,15 @@ export class KindredApp {
   async people() {
     const r = await this.request('/people', { method: 'GET' });
     return { ...r, people: (r.people || []).map(normalisePerson) };
+  }
+
+  /** Every active memory, with the person it belongs to and the spoken moment it came from. */
+  async memories({ q, person, limit = 200 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (q) params.set('q', q);
+    if (person) params.set('person', person);
+    const r = await this.request(`/memories?${params}`, { method: 'GET' });
+    return { memories: r.memories || [] };
   }
 
   async dock() {
@@ -440,5 +515,6 @@ export function normalisePerson(p) {
 }
 
 function idleRecording() {
-  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], translations: [], error: null, startedAt: null, last: null };
+  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], translations: [], replies: [],
+    reply: { phase: 'idle', language: null, english: null, translated: null, error: null }, error: null, startedAt: null, last: null };
 }

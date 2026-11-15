@@ -158,6 +158,26 @@ func speechChunks(_ audio: [Float]) -> [SpeechChunk] {
     return chunks + c.flush()
 }
 
+// MARK: Muting (two-way replies)
+
+/// Stretches of the recording live translation must ignore, in sample indices on the recording's
+/// timeline: while Kindred itself is speaking (+ a short tail for room echo), and while the owner
+/// records a reply. Otherwise Kindred's spoken French would be "heard" and translated back.
+final class Muter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var windows: [(start: Int, end: Int)] = []   // closed
+    private var open: [String: Int] = [:]                  // reason → start
+    func begin(_ reason: String, at index: Int) { lock.withLock { if open[reason] == nil { open[reason] = index } } }
+    func end(_ reason: String, at index: Int) { lock.withLock { if let s = open.removeValue(forKey: reason) { windows.append((s, max(s, index))) } } }
+    /// Fraction of [start, end) inside a muted stretch (open stretches count as running to the end).
+    func mutedFraction(_ start: Int, _ end: Int) -> Double {
+        guard end > start else { return 0 }
+        let spans = lock.withLock { windows + open.values.map { ($0, Int.max) } }
+        let covered = spans.reduce(0) { $0 + max(0, min(end, $1.1) - max(start, $1.0)) }
+        return min(1, Double(covered) / Double(end - start))
+    }
+}
+
 // MARK: Live translation
 
 /// Chunks the mic stream (SpeechChunker) and translates each foreign chunk on a separate task,
@@ -173,9 +193,12 @@ final class LiveTranslator: @unchecked Sendable {
     private let continuation: AsyncStream<Chunk>.Continuation
     private var worker: Task<Void, Never>!
 
+    let muter: Muter?
+
     /// `whisper` is awaited once by the worker, so chunks heard while the model is still loading queue up.
-    init(id: Any?, whisper: @escaping @Sendable () async -> WhisperKit?) {
+    init(id: Any?, muter: Muter? = nil, whisper: @escaping @Sendable () async -> WhisperKit?) {
         self.id = id
+        self.muter = muter
         let (stream, continuation) = AsyncStream<Chunk>.makeStream()
         self.continuation = continuation
         worker = Task { [weak self] in
@@ -210,6 +233,11 @@ final class LiveTranslator: @unchecked Sendable {
     }
 
     private func translate(_ chunk: Chunk, _ whisper: WhisperKit) async {
+        // Mostly Kindred's own voice, or the owner's reply: not the other person.
+        if let muter, muter.mutedFraction(chunk.start, chunk.end) >= 0.4 {
+            Out.log(String(format: "translate: %.1f-%.1fs muted (Kindred speaking or owner replying)", Double(chunk.start) / 16000, Double(chunk.end) / 16000))
+            return
+        }
         let t0 = Date()
         guard let detected = await detectClipLanguage(whisper, chunk.samples) else { return }
         let t1 = Date()

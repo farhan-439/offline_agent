@@ -1,7 +1,7 @@
 // Pebble's two surfaces: the stone (this window) and the conversation (?chat=1).
 // One click on the stone starts listening; what you said decides whether Pebble records,
 // translates, or answers. The three sub-buttons are always there to overrule it.
-import { routeIntent, orbMenuState, elapsed } from './view.mjs';
+import { routeIntent, orbMenuState, elapsed, replyButtonState, conversationLines, languageName } from './view.mjs';
 import { markSVG, mountMark } from './mark.mjs';
 
 const api = window.kindred;
@@ -19,7 +19,7 @@ let sizedFor = '';
 let ownCapture = false;       // a recording this stone started (the hub's own recordings stay quiet)
 let awaitingIntent = false;   // listening stopped, waiting for the words
 
-const SIZES = { idle: [112, 112], choose: [300, 196], live: [320, 208] };
+const SIZES = { idle: [112, 112], choose: [300, 196], live: [320, 208], 'live-translate': [348, 268] };
 
 // ---------- the stone ----------
 function sizeFor(state) {
@@ -36,6 +36,51 @@ function setListening(on) {
 }
 
 function line(text) { $('#island-line').textContent = text; }
+
+let islandNotice = null, islandNoticeTimer = null;
+function notify(text, ms = 6000) {
+  islandNotice = text;
+  clearTimeout(islandNoticeTimer);
+  islandNoticeTimer = setTimeout(() => { islandNotice = null; if (!chatMode) renderOrb(); }, ms);
+  renderOrb();
+}
+
+/** What they said, and what you said back — newest first. */
+function renderLines(rec) {
+  const list = $('#island-lines');
+  list.replaceChildren(...conversationLines(rec, 2).map((t) => {
+    const li = document.createElement('li');
+    const top = document.createElement('span');
+    const bottom = document.createElement('span');
+    bottom.className = 'eng';
+    if (t.kind === 'reply') {
+      top.className = 'you'; top.textContent = `You: “${t.english}”`;
+      bottom.textContent = t.translated || '';
+    } else {
+      top.className = 'orig'; top.textContent = `${languageName(t.language)}: “${t.text}”`;
+      bottom.textContent = t.translation || t.text;
+    }
+    li.append(top, bottom);
+    return li;
+  }));
+}
+
+/** Two-way translation: the reply half. */
+function renderReply(rec) {
+  const btn = $('#reply-btn');
+  const state = replyButtonState(rec);
+  btn.hidden = !!state.hidden;
+  if (state.hidden) return;
+  const phase = rec.reply?.phase || 'idle';
+  btn.textContent = phase === 'listening' ? 'Done'
+    : phase === 'transcribing' ? 'Writing…'
+    : phase === 'translating' ? 'Translating…'
+    : phase === 'speaking' ? 'Saying it…'
+    : 'Reply';
+  btn.disabled = !!state.disabled;
+  btn.dataset.listening = String(!!state.listening);
+  btn.setAttribute('aria-label', state.label || 'Reply in their language');
+}
 
 function renderOrb() {
   if (chatMode) return;
@@ -56,10 +101,13 @@ function renderOrb() {
   else if (!listening && island === 'live') island = 'idle';
   if (listening) island = 'choose';
 
+  const translating = menu.active === 'translate';
   $('#island').hidden = island === 'idle';
   $('#subs').hidden = island !== 'choose';
+  $('#live-actions').hidden = island !== 'live';
   $('#island-stop').hidden = island !== 'live';
-  sizeFor(island);
+  $('#island-lines').hidden = !(island === 'live' && translating);
+  sizeFor(island === 'live' && translating ? 'live-translate' : island);
 
   // While the stone is listening, the three choices are the point: never grey them out.
   // They only grey out when the microphone is genuinely busy with a recording or translation.
@@ -73,8 +121,14 @@ function renderOrb() {
     if (listening) line('Listening…');
   } else if (island === 'live') {
     const t = rec.startedAt ? ` · ${elapsed(Date.now() - rec.startedAt)}` : '';
-    line(saving ? 'Saving…' : menu.active === 'translate' ? `Translating${t}` : `Recording${t}`);
+    line(islandNotice || (saving ? 'Saving…' : translating ? `Translating${t}` : `Recording${t}`));
     $('#island-stop').disabled = saving;
+    if (translating && !saving) {
+      renderLines(rec);
+      renderReply(rec);
+    } else {
+      $('#reply-btn').hidden = true;
+    }
   }
   if (active) $('#pebble').setAttribute('aria-label', 'Pebble is recording. Tap to stop.');
 }
@@ -227,6 +281,11 @@ if (chatMode) {
     });
   }
   $('#island-stop').addEventListener('click', () => api.stopRecording());
+  $('#reply-btn').addEventListener('click', async () => {
+    const bearing = snap?.recording?.reply?.phase === 'listening';
+    const r = bearing ? await api.stopReply() : await api.startReply();
+    if (!r.ok) notify(r.error, 7000);
+  });
 }
 
 api.onIntent((payload) => {

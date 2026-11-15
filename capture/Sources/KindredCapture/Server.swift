@@ -28,6 +28,10 @@ import Argmax
 //   {"id":2,"cmd":"process","audio":"x.wav","place":"…","translate":true?} → same reply shape as record-stop
 //   {"id":3,"cmd":"speak","text":"This is Maya…","voice":"ryan"} → {"event":"speaking",…} then {"id":3,"spoken":true,…}
 //   {"cmd":"stop-speaking"}
+//   Two-way (during a translate recording): {"id":5,"cmd":"reply-start"} → {"id":5,"replying":true}, then
+//   {"id":6,"cmd":"reply-stop"} → {"id":6,"text":"<owner's English>","seconds":2.4}; {"cmd":"reply-cancel"}.
+//   Live translation ignores the mic during a reply and while `speak` plays (+0.6 s), so Kindred's own
+//   voice is never translated back. `speak` takes "language":"fr" (Qwen3-TTS's 10), "saveTo", "play":false.
 // Emits {"event":"ready","stt":true,"diarize":true,"tts":false,"ttsLoading":bool}, then {"event":"ready",…,"tts":true},
 // then {"event":"translate-ready","ms":…} once the translation model is preloaded (skipped with --no-translate 1,
 // or if it isn't staged; it then loads on first use). {"event":"translate-unavailable","error":…} if it can't load.
@@ -45,6 +49,10 @@ actor CaptureServer {
     var stopFlag = StopFlag(false)
     var cancelFlag = StopFlag(false)
     var recording = false
+    /// The mic and mute windows of the recording in progress (two-way replies need both).
+    var currentMic: MicCapture?
+    var muter: Muter?
+    var replyStart: Int?
     /// Multilingual Whisper for translation: preloaded after `ready` (unless --no-translate), else on first use.
     var multiLoad: Task<WhisperKit?, Never>?
 
@@ -99,6 +107,9 @@ actor CaptureServer {
                                 language: command["language"] as? String, saveTo: command["saveTo"] as? String,
                                 play: command["play"] as? Bool ?? true)
             case "stop-speaking": await stopSpeaking()
+            case "reply-start": replyBegin(id: id)
+            case "reply-stop": await replyEnd(id: id)
+            case "reply-cancel": replyCancel(id: id)
             default: Out.send(["id": id, "error": "Unknown command"])
         }
     }
@@ -135,6 +146,8 @@ actor CaptureServer {
             let mic = try await openMic(cancel: cancelFlag, simulate: simulate,
                                         onLive: { device in Out.send(["event": "mic-live", "id": id, "device": device, "ms": Int(Date().timeIntervalSince(started) * 1000)]) },
                                         onFallback: { from, to in Out.send(["event": "mic-fallback", "id": id, "from": from, "device": to]) })
+            currentMic = mic
+            defer { currentMic = nil; muter = nil; replyStart = nil }
             if live {
                 let ls = LiveSpeakers(id: id, session: session, mic: mic, embedder: speakers)
                 if let liveStreamer { ls.startPro(streamer: liveStreamer) } else { ls.startRolling() }
@@ -143,7 +156,9 @@ actor CaptureServer {
             }
             if translate {
                 // Chunks heard while the model finishes loading wait in the translator's queue.
-                let t = LiveTranslator(id: id, whisper: { await self.multilingual() })
+                let m = Muter()
+                muter = m
+                let t = LiveTranslator(id: id, muter: m, whisper: { await self.multilingual() })
                 mic.onIndexedChunk = { t.feed($0, at: $1) }
                 translator = t
                 Out.send(["event": "translating", "id": id, "model": env("KINDRED_WHISPER_MULTI_VARIANT") ?? defaultMultiVariant])
@@ -169,6 +184,43 @@ actor CaptureServer {
         } catch {
             Out.send(["id": id, "error": error.localizedDescription])
         }
+    }
+
+    // MARK: Two-way: the owner's spoken reply, cut from the live recording
+
+    /// {"id":n,"cmd":"reply-start"} during a recording → {"id":n,"replying":true}. Live translation
+    /// ignores the mic until reply-stop, so the owner's English isn't treated as the other person.
+    func replyBegin(id: Any?) {
+        guard let mic = currentMic else { Out.send(["id": id, "error": "Replies work during Live translation."]); return }
+        guard replyStart == nil else { Out.send(["id": id, "error": "Already recording a reply."]); return }
+        let at = mic.samples.get().count
+        replyStart = at
+        muter?.begin("reply", at: at)
+        Out.send(["id": id, "replying": true])
+    }
+
+    /// {"id":n,"cmd":"reply-stop"} → {"id":n,"text":"<English>","seconds":2.4} (English Whisper on just the reply).
+    func replyEnd(id: Any?) async {
+        guard let mic = currentMic, let start = replyStart else { Out.send(["id": id, "error": "No reply is being recorded."]); return }
+        try? await Task.sleep(nanoseconds: 250_000_000)  // keep the last syllable
+        let all = mic.samples.get()
+        let end = all.count
+        replyStart = nil
+        muter?.end("reply", at: end)
+        let clip = Array(all[min(start, end)..<end])
+        let seconds = Double(clip.count) / 16000
+        guard seconds >= 0.5 else { Out.send(["id": id, "error": "I didn't hear a reply.", "reason": "too-short"]); return }
+        let t0 = Date()
+        let results = (try? await whisper.transcribe(audioArray: clip, decodeOptions: sessionDecodeOptions)) ?? []
+        let text = cleanTranscript(results.map(\.text).joined(separator: " "))
+        guard !text.isEmpty else { Out.send(["id": id, "error": "I didn't catch your reply. Try again a little closer to the Mac.", "reason": "no-speech"]); return }
+        Out.send(["id": id, "text": text, "seconds": round2(seconds), "transcribeMs": Int(Date().timeIntervalSince(t0) * 1000)])
+    }
+
+    func replyCancel(id: Any?) {
+        if let mic = currentMic, replyStart != nil { muter?.end("reply", at: mic.samples.get().count) }
+        replyStart = nil
+        Out.send(["id": id, "cancelled": true])
     }
 
     func stopSpeaking() async {
@@ -202,7 +254,11 @@ actor CaptureServer {
         stopSpeech = stop
         let started = Date()
         let firstChunk = Locked<Int?>(nil)
+        // During a recording, live translation ignores the mic while we speak (+0.6 s echo tail).
+        let mute = muter, mic = currentMic
+        mute?.begin("speaking", at: mic?.samples.get().count ?? 0)
         speakingTask = Task {
+            defer { mute?.end("speaking", at: (mic?.samples.get().count ?? 0) + 9600) }
             do {
                 let result = try await tts.play(text: text, speaker: speaker, language: lang,
                                                 options: whisperLineOptions(chars: text.count, language: lang),

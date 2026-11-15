@@ -25,7 +25,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   else if (c.cmd === 'record-stop') { out({ event: 'processing', id: rec }); out({ id: rec, session: 's1', jsonl: '/x/s1.jsonl', audio: '/x/s1.wav', utterances: 3, speakers: 2 }); }
   else if (c.cmd === 'process' && c.translate === true) out({ id: c.id, session: 's2', jsonl: '/x/s2.jsonl', audio: c.audio, utterances: 2, speakers: 1, translated: 1 });
   else if (c.cmd === 'record-cancel') out({ id: rec, error: 'Recording cancelled.' });
-  else if (c.cmd === 'speak') out({ id: c.id, spoken: true, text: c.text });
+  else if (c.cmd === 'reply-start') out(rec ? { id: c.id, replying: true } : { id: c.id, error: 'Replies work during Live translation.' });
+  else if (c.cmd === 'reply-stop') out({ id: c.id, text: 'Thank you, is it far?', seconds: 2.1 });
+  else if (c.cmd === 'reply-cancel') out({ id: c.id, cancelled: true });
+  else if (c.cmd === 'speak') out({ id: c.id, spoken: true, text: c.text, language: c.language || 'english' });
   else if (c.cmd === 'process') out({ id: c.id, error: 'Existing audio file is required.' });
   else if (c.cmd === 'die') process.exit(3);
 });
@@ -109,4 +112,20 @@ test('helper errors and crashes reject pending requests', async () => {
 
 test('missing binary fails clearly', () => {
   assert.throws(() => new CaptureBridge({ binary: '/nope' }).warm(), /not built/);
+});
+
+test('two-way: reply commands and speaking in another language', async () => {
+  const b = make();
+  await b.whenReady();
+  await assert.rejects(b.replyStart(), /during Live translation/);
+  const rec = b.startRecording({ translate: true });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await b.replyStart()).replying, true);
+  const r = await b.replyStop();
+  assert.equal(r.text, 'Thank you, is it far?');
+  assert.equal((await b.replyCancel()).cancelled, true);
+  const spoken = await b.speakIn('  Merci,\n est-ce loin ? ', 'fr');
+  assert.deepEqual([spoken.text, spoken.language], ['Merci, est-ce loin ?', 'fr']);
+  b.stopRecording(); await rec;
+  b.close();
 });
