@@ -1,175 +1,141 @@
-# Kindred — an offline memory for the people in your life
+# Pebble — a private memory that can act
 
-> Clip it on, tap record, live your day. Kindred hears who you talk to (Argmax), remembers what matters about each person (Bonsai), and when someone walks up it quietly tells you who they are and what you promised them. Wi-Fi off. Nothing ever leaves the device.
+Pebble is a desktop companion that hears a conversation, remembers the people and details that matter, finds the original evidence when you ask, and helps turn a remembered promise into a reviewed action. Speech, language-model inference, and memory run on an Apple Silicon Mac. The repository and launcher are named **Kindred**; **Pebble** is the app you use.
 
-**Local AI Hackathon (Cornell Commons) — theme: _Recreate_.** We recreate wearable AI memory pendants such as [Omi](https://www.omi.me), fully on-device, and specialise them for people with memory loss and their caregivers.
+> Record a conversation with Maya. Later ask, “What did I promise her?” Pebble finds the memory, shows the words it came from, and can play the original clip. If that promise belongs in Reminders, Pebble prepares a draft for you to check before adding it.
 
----
+Pebble is motivated by the needs of people with memory loss and their caregivers, and is useful to anyone who wants a private memory of conversations. A small model cannot hold a life of conversations in its context window, while a generic summary can lose who said what. Pebble keeps the long record on disk, retrieves only relevant pieces, and ties answers and actions back to sources.
 
-## 1. Hackathon requirements (do not break these)
+## What Pebble does
 
-| Rule | What it means for us |
-|---|---|
-| Must use **Bonsai-2 (2B / 4B / 9B only)** | Bonsai is the *only* language model. We use `bonsai-4b` via a local llama.cpp server. |
-| Must use **Argmax** | Speech-to-text (WhisperKit), speaker diarization + voiceprints (SpeakerKit / Argmax Pro), speech (TTSKit). Swift on Apple Silicon. We have a **Pro API key** — keep it in an env var, never commit it. |
-| Must run on a **Mac with Wi-Fi off** | All model weights downloaded ahead of time. Test the whole demo with Wi-Fi off, including the Pro license check. |
-| Judging | 1) use of Bonsai/Argmax 2) creativity 3) wow factor 4) technical impressiveness |
-| Submission — **noon, Sun 11/15**, `#submissions` | Names, one-sentence description, GitHub link, **video < 2 min**. Finalists: 4-minute live demo. |
-| Teams | Max 2 people. |
-| Extra tracks | Accessibility (LM Studio) — our memory-loss focus fits. Sustainability — our batch "dock" design fits. |
+- **Record and remember.** Argmax WhisperKit transcribes speech; SpeakerKit separates speakers and produces voiceprints. **Dock today** uses Bonsai 2 4B to extract people, facts, dates, promises, episodes, and short memory cards.
+- **Recognize someone returning.** With a usable voiceprint, Pebble can identify a familiar speaker and speak a short reminder through Argmax TTSKit. You can enroll your own voice so it is not treated as a visitor's.
+- **Ask with evidence.** Ask by voice or text. Pebble searches conversations, notes, and photos, and shows citations with available audio clips or images. You can attach a photo or text file to a question, or add a photo to memory.
+- **Translate and reply.** Translate mode shows the original speech and an English translation, and speaks the English. Reply in English by voice or text; Bonsai translates the reply into Spanish, French, German, or Chinese, and Argmax TTSKit speaks it in that language.
+- **Review actions.** Bonsai drafts Calendar events, Reminders, Notes, and birthday updates from saved facts. You inspect the source, edit a draft, queue it, review the run, and explicitly choose **Run actions** before a Mac app is changed.
+- **Inspect memory.** The Memory screen offers a map of the pipeline and people over time, and a shelf for facts, recall traces, and sources.
 
-**Equal sponsor use is a design rule.** Every feature must need both: Argmax for *who/what was heard/how it's said*, Bonsai for *what it means/what to remember/how to answer*.
+The hackathon's Technical Details permit Bonsai 2B, 4B, or 9B as the language model and require Argmax for on-device speech. This project uses **Bonsai 2 4B as its only language model** for extraction, recall, photo understanding, action drafting, and reply translation. The tested 4B GGUF is about 1.1 GB plus a roughly 350 MB vision projector; actual RAM use rises with context and the other loaded models.
 
-## 2. Product
+## Requirements
 
-**Who it's for:** an older adult with memory loss (and their caregiver), while remaining useful to anyone who needs a private memory of conversations.
+This desktop build targets an **Apple Silicon Mac (M1 or newer) with macOS 15 or newer**. Prepare these while online:
 
-**Three moments**
+1. **Node.js 24 or newer** and npm.
+2. **Swift 6.3 or newer** and Xcode Command Line Tools. Check with `swift --version` and `xcode-select -p`.
+3. Free disk space for Bonsai, roughly 1.3 GB of Argmax speech models, Electron, and your recordings.
+4. A microphone. Earbuds help keep spoken reminders out of the recording; for two-way replies, choose an output the other person can hear.
+5. An **Argmax Pro API key** for Sortformer live speaker detection. Without Pro, the open-source rolling speaker fallback remains available.
 
-1. **Capture (out in the world).** One button. Argmax transcribes, separates speakers, and computes a voiceprint per speaker — cheap, always-on, on-device.
-2. **Dock (back home).** Bonsai processes the day in one batch: names people from what was said, extracts facts/promises/appointments/allergies, links them to people, writes a short "core memory" card per person.
-3. **Recall.**
-   - **Live whisper:** a known voice starts talking → *"This is Maya, your neighbour. You promised to water her tomatoes."* (Argmax voiceprint → Bonsai memory → Argmax TTS)
-   - **Ask:** *"What did the doctor change about my medication?"* → spoken answer + the original audio clip as proof.
+The event brief also mentions recent Snapdragon/Qualcomm devices, but this repository's Electron and Swift launcher is for macOS. The commands below do not set up Android, Windows, or Linux.
 
-Kindred is meant to remember ordinary conversations, family and doctor calls, appointments, promises, and directions. For travel, the planned Argmax capture flow can pair speech in the original language with a translation. Memory keeps both and cites the original audio; Bonsai can answer a later question such as *"How do we get back to the station?"* and Argmax can speak the answer. The live translation flow is being built in `capture/`.
+## Install on another Mac
 
-**Planned photo memory:** add a photo locally, let Bonsai vision extract searchable details with the photo as evidence, then ask about it later. This is a product plan, not an implemented upload or retrieval path. See [current status and build plan](docs/MEMORY_STATUS.md).
+Run these while connected to the internet. The model checkout, weights, local database, recordings, and `.env` are ignored by Git, so cloning this repository alone does not bring them along.
 
-### Why not just use Omi?
-
-| | Omi | Kindred |
-|---|---|---|
-| Where it thinks | Cloud by default; offline only records and syncs later | **Fully on-device, Wi-Fi off** |
-| Who said what | Paid tier; reviews report generic "Speaker 1/2" labels | **Core feature**: voiceprints + Bonsai names people from context |
-| Memory model | Per-conversation summaries, to-dos | **People graph** across all conversations, with layered memory |
-| Trust | Summaries | **Every answer cites the exact utterances + audio clip**; uncited facts are rejected |
-| Cost | Subscription, query caps | None |
-
-Specialisation: Omi answers *"what did we talk about?"*. Kindred answers *"who is this, and what do I need to remember about them?"* — the question a person with memory loss actually has, for conversations too private for the cloud (medical, family).
-
-## 3. Architecture
-
-```
-            ┌──────────── capture/ (Swift · Argmax) ─────────────┐        ┌──────────── memory/ (Node · Bonsai) ────────────────┐
- mic ──▶ WhisperKit ─▶ words+timestamps ┐                          │        │                                                    │
-        SpeakerKit ─▶ speaker per word  ├─▶ session.jsonl ─────────┼──dock──▶ L0 raw log (SQLite + FTS5)                         │
-        Pro        ─▶ voiceprint/cluster┘   (docs/CONTRACT.md)     │        │   │ stage 1: filler filter + topic segmentation   │
-                                                                   │        │   ▼ stage 2: Bonsai extraction (JSON schema)      │
-        live: voiceprint ───────────────── identify ───────────────┼───────▶│ L1 episodes · L2 grounded facts · people graph    │
-        TTSKit ◀──────────────────────── whisper line ◀────────────┼────────│   ▼ sleep-time: Bonsai rewrites L3 core memory    │
-        TTSKit ◀──────────────────────── answer + clips ◀──────────┼────────│ recall: Bonsai pages memory in from disk (MemGPT)  │
-            └──────────────────────────────────────────────────────┘        └────────────────────────────────────────────────────┘
-```
-
-### Memory design (the technical core)
-
-Bonsai has a small context window and the memory grows forever, so **the prompt never holds the memory — the disk does, and Bonsai decides what to page in.**
-
-| Layer | What | Who writes it | Research idea |
-|---|---|---|---|
-| **L0 raw** | Every utterance + speaker + audio offsets, FTS5-indexed | capture → ingest | MemGPT *recall storage* |
-| **L1 episodes** | Topic segments with a Bonsai summary | dock stage 2 | LightMem short-term → summarised segments |
-| **L2 facts** | `person · kind · text · when · evidence[utterance ids]` | dock stage 2 | LightMem long-term; grounded extraction |
-| **L3 core** | ≤50-word card per person, always in Bonsai's prompt | dock sleep-time step | MemGPT *core memory*; LightMem *sleep-time update* |
-| **People graph** | people, relations, voice centroids | dock (Bonsai names + Argmax voiceprints) | — our contribution: voice identity ⇄ semantic memory |
-
-Key mechanisms:
-- **LightMem-style pre-compression (stage 1, no LLM):** filler like "um, yeah" is dropped and the stream is cut into topic segments by silence gaps / size before Bonsai sees anything → fewer, smaller Bonsai calls.
-- **Grounded extraction:** every fact must cite utterance ids that exist in the segment, otherwise it is rejected. Small model + memory-loss users = no hallucinated memories.
-- **Voice ⇄ name binding, gated by evidence:** a name is validated first (placeholders, the owner, pronouns and forms of address like "Mom" are rejected; relations must be nouns such as `neighbour` or `granddaughter`). A voiceprint is enrolled only when the speaker introduced themselves ("Hi, it's Maya from next door", "Hey Mom, it's Sam") or said the name, so a hallucinated name cannot poison identity. Next time that voice appears, she is recognised instantly without the LLM.
-- **Multi-person facts:** `fact_people` links a fact to everyone it concerns, so "Sam is coming with Lily" is found from either person's partition. Duplicate facts are skipped, and a changed number (5 mg → 10 mg) supersedes the older fact.
-- **Sleep-time consolidation:** at dock, Bonsai selects the most useful facts for each core card and flags older facts superseded by newer ones. The card is assembled from source facts to prevent new prose from inventing details.
-- **MemGPT-style recall:** Bonsai sees core memory + a working context with a hard budget (2,400 chars). It uses native tool calls to `search`, `open_episode`, or `answer`. Old pages are evicted when the budget overflows. Bonsai plans subqueries, makes embeddings for a vector + BM25 shortlist, then semantically selects up to six pages before paging begins.
-- **Citations are verified:** an answer may only cite pages it actually loaded, including the always-visible core cards. Cited pages map back to utterance ids → audio clips (or to a photo).
-- **Retrieval modes, with a real capability probe:** `hybrid-rerank` (default), `hybrid` and `bm25`. Embedding support is probed once against the server; if `/v1/embeddings` answers 501, dock and ask keep working in BM25 mode and `/health` says so. This is what makes the app safe to start without the embedding flag.
-- **Photo memory:** a local image is copied into `data/photos/`, Bonsai vision extracts grounded observations, they are indexed with Bonsai embeddings + FTS5, and answers cite the original photo. The proposed capture handoff is in [docs/PHOTO_HANDOFF.md](docs/PHOTO_HANDOFF.md); the shared contract is unchanged.
-- **Local actions with confirmation:** `play_original_clip` is read-only; `set_reminder`, `correct_memory` and `forget_memory` are two-phase — Bonsai proposes, the user confirms, then memory changes.
-- **Grammar-constrained output:** every Bonsai call sends a JSON schema to llama.cpp, so output is always parseable.
-
-## 4. Repository layout
-
-```
-docs/CONTRACT.md          the ONLY interface between the two halves — read this first
-docs/PHOTO_HANDOFF.md     proposed image handoff for capture (not yet in the contract)
-docs/MEMORY_STATUS.md     current memory status, retrieval modes and measurements
-contract/fixtures/*.jsonl hand-written sessions (Maya, Dr. Patel, Sam) with fake voiceprints
-capture/                  Swift · Argmax  → owner: Partner (Argmax lead)
-memory/                   Node 24 · Bonsai → owner: Farhan (memory/retrieval lead)
-bonsai-demo/              local PrismML checkout + 4B GGUF (git-ignored)
-data/                     runtime: inbox/, audio/, photos/, kindred.sqlite (git-ignored)
-```
-
-## 5. Division of work
-
-We split along the contract, so each person can build and demo their half alone using the fixtures, then plug together.
-
-### Farhan — `memory/` (Bonsai: memory + retrieval)
-
-**Status:** items 1–5 below are implemented on `bionic/bonsai-memory`; the memory visualisation
-data (people graph + recall traces) is exposed over HTTP, the UI itself is still open. See
-[docs/MEMORY_STATUS.md](docs/MEMORY_STATUS.md) for the current state and real-model numbers.
-1. **Extraction quality on real Bonsai 4B** (see Status for failures seen): speakers named from self-introductions ("it's Sam") not put in `mentioned`; reject placeholder names (`?`, `owner`, `Mom` as a person when it's the owner); relation as a noun (`neighbour`, not `next door`); first-person facts rewritten to third person.
-2. **Core memory prompt:** owner's card hallucinated ("your partner…"). Separate prompt for the owner vs. other people; only use facts given.
-3. **Recall quality:** answer combined questions (Sam's visit *and* Lily's allergy), resolve relative dates ("this Sunday" relative to recording date), prefer facts over raw utterances.
-4. **Make it measurable:** a tiny eval (10–15 questions over the fixtures, scored for correct + grounded). Show judges numbers, not vibes.
-5. **Long-running memory server:** wrap `who` / `ask` / `dock` in a local HTTP or stdin JSON server so capture/UI don't spawn Node per call.
-6. **Memory visualisation (stretch):** people graph + the recall trace (what Bonsai paged in/out) — this is the "technical wow" screen.
-
-### Partner — `capture/` (Argmax: hearing, identity, voice)
-1. **Get `process` working offline:** download WhisperKit / SpeakerKit / TTSKit models once, point `KINDRED_*_MODEL` env vars at them, verify with Wi-Fi off.
-2. **Voiceprints (critical path):** open-source SpeakerKit does **not** expose speaker embeddings. Use the **Argmax Pro SDK** to get a per-cluster embedding and write it into `speaker.voiceprint`. Without this, live recognition doesn't work.
-3. **Live capture:** `record` command — mic → rolling buffer → streaming transcription; emit `speaker` events with `final:false` as soon as a cluster is stable (for the live whisper).
-4. **Whisper loop:** on a new stable speaker, call memory `who` → speak the line with TTSKit (quiet, short, interruptible).
-5. **Audio clips:** save session audio to `data/audio/` so recall can replay evidence.
-6. **App shell / UI (with Farhan):** one record button, live transcript with speaker colours, "dock" button, ask box/mic. Simple is fine.
-
-### Together
-- **Integration checkpoint:** a real recorded session goes capture → dock → ask, Wi-Fi off.
-- **Demo script + video** (< 2 min), README polish, submission.
-
-### Suggested timeline (to noon Sunday)
-| By | Farhan (memory) | Partner (capture) |
-|---|---|---|
-| Sat 9 pm | extraction + core prompt fixes, eval set | offline models, `process` on a real WAV, Pro SDK voiceprints |
-| Sun 2 am | recall fixes, memory server | live `record` + `who` → TTS whisper |
-| Sun 8 am | graph/trace view | UI shell, audio clips |
-| Sun 10 am | **integration, Wi-Fi-off run, record demo video** | ← same |
-| Sun 12 pm | **submit** | |
-
-## 6. Status
-
-See [current status and build plan](docs/MEMORY_STATUS.md) for completed code, measured results, remaining risks, and planned features. The working local model is Bonsai 2 4B. The photo memory path and additional action tools are planned, not built.
-
-## 7. Running it
-
-**Bonsai server** (the local PrismML Bonsai demo checkout is in `bonsai-demo/`, ignored by this repo):
 ```sh
+git clone https://github.com/farhan-439/offline_agent.git
+cd offline_agent
+
+git clone https://github.com/PrismML-Eng/Bonsai-demo.git bonsai-demo
 cd bonsai-demo
-BONSAI_FAMILY=bonsai2 BONSAI_MODEL=4B BONSAI_CTX=8192 BONSAI_THINKING=0 BONSAI_NGL=99 BONSAI_HOST=127.0.0.1 \
-  ./scripts/start_llama_server.sh -np 1 --alias bonsai-4b --embeddings --pooling mean
-```
+BONSAI_FAMILY=bonsai2 BONSAI_MODEL=4B BONSAI_OPENWEBUI=0 BONSAI_CODE_INTERPRETER=0 ./setup.sh
+cd ..
 
-**Memory** (Node 24+, no dependencies):
-```sh
-cd memory
-npm test                 # scripted model, no server needed
-npm run demo             # full fixture day against the real Bonsai server
-npm run kindred -- ingest ../data/inbox/*.jsonl
-npm run kindred -- dock
-npm run kindred -- ask "What did Maya ask me to do?"
-npm run kindred -- people
-```
-Env: `BONSAI_URL` (default `http://127.0.0.1:8080/v1`), `BONSAI_MODEL` (`bonsai-4b`), `KINDRED_DB` (`data/kindred.sqlite`).
-
-**Capture** (Apple Silicon, Xcode 16+):
-```sh
 cd capture
-swift build -c release
-.build/release/kindred-capture process ~/some-conversation.wav --place "kitchen" --out ../data/inbox
-.build/release/kindred-capture speak "This is Maya, your neighbour."
-```
-Env: `KINDRED_WHISPER_MODEL`, `KINDRED_TTS_MODEL` (local model folders, required for Wi-Fi-off), `KINDRED_VOICE` (`ryan`).
+npm run build
+.build/release/kindred-capture provision
+cd ..
 
-## 8. Privacy and consent
-Recording people has legal and ethical limits. Kindred shows a visible recording state, keeps everything on the device, and will support "forget this conversation/person" (delete L0–L3 rows + audio). Mention this in the demo.
+cd app
+npm ci
+cd ..
+```
+
+The Bonsai setup downloads the **4B** checkpoint and matching llama.cpp binary. Keep `BONSAI_MODEL=4B`: the upstream demo defaults to 27B, outside this project's event constraint. Argmax `provision` stages WhisperKit, SpeakerKit, TTSKit, live-detection, and multilingual models under `~/Library/Caches/Kindred/`. Finish it before going offline.
+
+For Argmax Pro, store the runtime key in the ignored root `.env` file as `ARGMAX_API_KEY=ax_...`, or export it in your shell. The `axst_...` package-registry credential and `ax_...` runtime key are different. See [Argmax setup and licensing](capture/README.md#argmax-pro-sdk) if the Swift package cannot be fetched or Pro is unavailable. Never commit either credential.
+
+```sh
+./kindred --check
+```
+
+The preflight checks Node, the Swift binary, Electron, staged models, Pro status, and local services. A warning that Bonsai is not running is expected; `./kindred` starts it. Fix missing binaries or models before trying an offline demo.
+
+## Start and use Pebble
+
+```sh
+./kindred
+```
+
+The launcher starts the local Bonsai server on `127.0.0.1:8080` if needed and opens the Electron app. The app starts and supervises the memory service on `127.0.0.1:8787`. Normal memory lives in `data/kindred.sqlite`; recordings, photos, and logs are under `data/`. Quitting the app stops the memory service it started. Bonsai can remain running for the next launch.
+
+1. Open **Capture → Record**, press the stone, have a conversation, then stop.
+2. Open **Memory → Dock today**. Bonsai turns the saved session into searchable people, episodes, and facts.
+3. Open **Capture → Ask**. Type or speak a question, inspect the cited source, and play its audio if available.
+4. In **Memory**, use **Map** to follow speech through the memory pipeline, or **Shelf** to inspect records and recall. **My voice** enrolls your voice for live recognition.
+5. In **Actions**, choose **Compile**, review a proposal and source, edit its details, queue it, inspect **Run reviewed**, then choose **Run actions**. macOS may ask Pebble Actions for Calendar, Reminders, or Contacts permission.
+
+For travel, use **Capture → Translate**. The live transcript shows the other person's language and English. Use **Speak reply** or type an English reply; choose Auto or one of the four supported reply languages. Pebble suppresses its own playback and your reply from live translation so it does not translate itself back as another speaker. Check names, dates, doses, and allergens with the person directly.
+
+### Sample memory
+
+To explore recall before recording anyone, start Bonsai and build the demo database:
+
+```sh
+memory/scripts/start-bonsai.sh
+```
+
+Keep that terminal open until the server is ready. In a second terminal at the repository root:
+
+```sh
+node scripts/demo-db.mjs
+./kindred --demo
+```
+
+The sample conversations are about Maya, Dr. Patel, Sam, and Lily. Their fixture voiceprints are placeholders; a live whisper needs a real recording and enrollment. `scripts/demo-db.mjs` rebuilds `data/demo.sqlite`; your own conversations use `data/kindred.sqlite`. If Bonsai is already running, skip the manual server command. An existing memory server on port 8787 keeps its current database, so stop it before switching to `--demo`.
+
+## How it works
+
+```text
+Mic / photo / note
+  → Argmax WhisperKit: words, language, translation
+  → Argmax SpeakerKit / Pro: speakers and voiceprints
+  → saved audio, photo, timestamps, and source IDs
+  → Bonsai 2 4B: filter, extract, ground, consolidate
+  → SQLite: raw lines → episodes → facts → core cards
+  → keyword + vector search → Bonsai selection → cited answer
+  → Argmax TTSKit speaks; reviewed drafts can become Mac actions
+```
+
+The long record stays **on disk**. Bonsai produces short episodes and evidence-linked facts, then keeps small core cards close. Recall searches and pages in relevant evidence instead of packing every conversation into the prompt. Facts without valid source IDs are rejected; answers may cite only material the system loaded. Search combines embeddings and keyword search when available and falls back to keyword search if embeddings are unavailable.
+
+**Argmax handles hearing, speaker identity, and speech output; Bonsai handles meaning, memory, retrieval, and translation of your reply.** `capture/` is Swift, `memory/` is Node and SQLite, and `app/` is Electron. Their session format is in [docs/CONTRACT.md](docs/CONTRACT.md).
+
+## Privacy and known limits
+
+- Inference and stored memory are local after provisioning. Setup downloads models; Argmax Pro may require an online license check or a valid cached token. A connected Mac's Calendar, Contacts, or Notes account can sync independently of Pebble. Use **On My Mac** destinations for the most private action flow; see [the app guide](app/README.md#actions-from-recordings-to-reviewed-drafts).
+- Recording other people requires their consent where applicable. Source audio and photos remain under local `data/`; protect the Mac account and disk as you would any personal archive.
+- Live voice recognition was measured mainly with synthetic voices and simulated microphone input. Noise, accents, short turns, and overlapping speakers can lower accuracy. A person may need several seconds of speech before recognition is possible.
+- Translation can mishear or mistranslate numbers, names, medical details, or code-switched speech. Two-way replies are limited to Spanish, French, German, and Chinese based on the project's feasibility checks.
+- The launcher uses Bonsai 2 4B with an 8,192-token server context and one server slot. Speed and RAM use depend on the Mac and session length; identical timing on every laptop is not guaranteed.
+
+## Tests and troubleshooting
+
+```sh
+cd memory && npm test
+cd ../capture && npm test
+cd ../app && npm test
+```
+
+These tests cover memory rules and app/capture plumbing, with fakes in several paths. For an end-to-end check, provision while online, then record and dock a real conversation, ask a sourced question, try translation, and repeat with Wi-Fi disabled.
+
+| Symptom | Check |
+|---|---|
+| Missing Argmax models | Re-run `capture/.build/release/kindred-capture provision` while online. |
+| Bonsai does not start | Read `data/logs/bonsai.log`; confirm `bonsai-demo/bin/mac/llama-server` and the 4B GGUF exist. Paths can be overridden with `BONSAI_DEMO_DIR`, `BONSAI_BIN`, `BONSAI_GGUF`, and `BONSAI_MMPROJ`. |
+| The app opens but cannot answer | Read `data/logs/memory.log` and check ports 8080 and 8787. |
+| Pro live detection is unavailable | Run `capture/.build/release/kindred-capture license`; check the `ax_...` key and cached license. |
+| A Mac action cannot be added | Review required dates and times, grant macOS permission, and create an **On My Mac** calendar or list if needed. |
+
+Implementation guides: [capture](capture/README.md), [memory](memory/README.md), [app](app/README.md). Startup logic: [scripts/kindred.mjs](scripts/kindred.mjs). Demo data builder: [scripts/demo-db.mjs](scripts/demo-db.mjs).
