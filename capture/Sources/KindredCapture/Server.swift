@@ -50,7 +50,10 @@ actor CaptureServer {
                 let place = command["place"] as? String
                 let live = command["live"] as? Bool ?? true
                 let simulate = command["simulate"] as? String
-                Task { await self.record(id: id, session: session, place: place, live: live, simulate: simulate) }
+                let outDir = (command["outDir"] as? String).map { URL(fileURLWithPath: $0) } ?? config.outDir
+                let audioDir = (command["audioDir"] as? String).map { URL(fileURLWithPath: $0) } ?? config.audioDir
+                Task { await self.record(id: id, session: session, place: place, live: live, simulate: simulate,
+                                         outDir: outDir, audioDir: audioDir) }
             case "record-stop": stopFlag.set(true)
             case "record-cancel": cancelFlag.set(true)
             case "process":
@@ -76,7 +79,8 @@ actor CaptureServer {
         } catch { Out.send(["id": id, "error": error.localizedDescription]) }
     }
 
-    func record(id: Any?, session: String, place: String?, live: Bool, simulate: String? = nil) async {
+    func record(id: Any?, session: String, place: String?, live: Bool, simulate: String? = nil,
+                outDir: URL, audioDir: URL) async {
         defer { recording = false }
         let started = Date()
         Out.send(["event": "recording", "id": id, "session": session])
@@ -103,10 +107,10 @@ actor CaptureServer {
             if cancelFlag.get() { Out.send(["id": id, "error": "Recording cancelled."]); return }
             guard mic.heardSpeech.get() else { Out.send(["id": id, "error": "No speech was heard.", "reason": "no-speech"]); return }
             Out.send(["event": "processing", "id": id, "audioMs": audio.count / 16])
-            let wav = config.audioDir.appendingPathComponent("\(session).wav")
+            let wav = audioDir.appendingPathComponent("\(session).wav")
             try writeWAV(audio, sampleRate: 16000, to: wav)
             reply(id, try await writeSession(audio: audio, audioPath: wav.path, session: session, place: place, startedAt: started,
-                                             outDir: config.outDir, whisper: whisper, speakers: speakers))
+                                             outDir: outDir, whisper: whisper, speakers: speakers))
         } catch {
             Out.send(["id": id, "error": error.localizedDescription])
         }

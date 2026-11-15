@@ -4,7 +4,7 @@
 //   capture (Argmax, kindred-capture serve) ──events──▶ KindredApp ──▶ LiveWhisper ──/identify──▶ memory
 //   memory (Bonsai, :8787) ◀──HTTP── KindredApp: /health /people /dock /ask, /ingest after a recording
 import http from 'node:http';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -57,6 +57,7 @@ export class KindredApp {
     emit = () => {},
   }) {
     this.repoRoot = repoRoot;
+    this.purgeAskTemps();
     this.memoryUrl = memoryUrl.replace(/\/$/, '');
     this.fetchImpl = fetchImpl;
     this.emit = emit;
@@ -68,13 +69,20 @@ export class KindredApp {
     this.lastWhisper = null;
     this.recordingTask = null;
     this.lastCaptureError = '';
+    this.askState = { phase: 'idle', question: null, error: null };
+    this.askListeningTask = null;
   }
 
   // ---------- status ----------
   snapshot() {
-    return { memory: this.memory, capture: this.capture, recording: this.recording, whisper: this.lastWhisper };
+    return { memory: this.memory, capture: this.capture, recording: this.recording, whisper: this.lastWhisper, ask: this.askState };
   }
   changed() { this.emit('status', this.snapshot()); }
+  setAskState(patch) {
+    this.askState = { ...this.askState, ...patch };
+    this.emit('ask-state', this.askState);
+    this.changed();
+  }
 
   start() {
     if (this.capture.available) {
@@ -114,6 +122,11 @@ export class KindredApp {
 
   // ---------- capture events ----------
   onCaptureEvent(e) {
+    if (this.askState.phase !== 'idle' && ['recording', 'mic-live', 'processing'].includes(e.type)) {
+      if (e.type === 'mic-live') this.setAskState({ phase: 'listening', device: e.device ?? null });
+      if (e.type === 'processing') this.setAskState({ phase: 'processing' });
+      return;
+    }
     switch (e.type) {
       case 'ready':
         this.capture = { ...this.bridge.status(), message: e.tts ? 'Argmax ready (listening + voice)' : 'Argmax ready (voice still loading)' };
@@ -188,7 +201,7 @@ export class KindredApp {
 
   // ---------- record ----------
   startRecording({ place, mode = 'conversation' } = {}) {
-    if (this.recordingTask) throw new Error('Already recording.');
+    if (this.recordingTask || this.askListeningTask) throw new Error('Already recording.');
     if (!this.capture.available) throw new Error(this.capture.message);
     this.live.reset();
     this.lastWhisper = null;
@@ -252,6 +265,14 @@ export class KindredApp {
     }
   }
 
+  /** Remove temporary voice questions left behind if the app was interrupted mid-transcription. */
+  purgeAskTemps() {
+    const dir = path.join(this.repoRoot, 'data/ask-tmp');
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) if (/^ask-[A-Za-z0-9_-]+\.(?:jsonl|wav)$/.test(name))
+      rmSync(path.join(dir, name), { force: true });
+  }
+
   async runRecording(place) {
     let result;
     try {
@@ -292,6 +313,45 @@ export class KindredApp {
   }
 
   // ---------- ask ----------
+  /** Record one spoken question without sending its transcript or audio to long-term memory. */
+  startAskListening({ simulate } = {}) {
+    if (this.recordingTask || this.askListeningTask) throw new Error('Finish the current recording first.');
+    if (!this.capture.available) throw new Error(this.capture.message);
+    this.stopSpeaking();
+    this.setAskState({ phase: 'starting', question: null, error: null, device: null });
+    this.askListeningTask = this.runAskListening(simulate).finally(() => { this.askListeningTask = null; });
+    return { started: true };
+  }
+
+  stopAskListening() {
+    if (!this.askListeningTask) return false;
+    this.setAskState({ phase: 'processing' });
+    return this.bridge.stopRecording();
+  }
+
+  async runAskListening(simulate) {
+    let result;
+    try {
+      const tempDir = path.join(this.repoRoot, 'data/ask-tmp');
+      mkdirSync(tempDir, { recursive: true });
+      result = await this.bridge.startRecording({ place: 'voice question',
+        session: `ask-${new Date().toISOString().replace(/[:.]/g, '-')}`, live: false,
+        outDir: tempDir, audioDir: tempDir, simulate });
+      const events = readFileSync(result.jsonl, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      const question = events.filter((event) => event.type === 'utterance' && event.text?.trim())
+        .sort((a, b) => (a.start ?? 0) - (b.start ?? 0)).map((event) => event.text.trim()).join(' ').trim();
+      if (!question) throw new Error("I couldn't hear a question. Please try again.");
+      this.setAskState({ phase: 'answering', question, error: null });
+      await this.ask(question);
+      this.setAskState({ phase: 'idle' });
+    } catch (error) {
+      const message = /speech/i.test(error.message) ? "I couldn't hear a question. Please try again." : error.message;
+      this.setAskState({ phase: 'idle', error: message });
+    } finally {
+      if (result) this.discard(result);
+    }
+  }
+
   async ask(question, { speak = true } = {}) {
     const q = String(question ?? '').trim();
     if (!q) throw new Error('Type a question first.');
@@ -301,9 +361,11 @@ export class KindredApp {
     const sources = out.sources?.length ? out.sources : (out.inputs || []).map((input) => ({
       ref: input.id, layer: 'input', text: input.text, when: input.createdAt,
     }));
-    if (speak && out.answer) this.speak(out.answer);
-    return { question: q, answer: out.answer, grounded: !!out.grounded,
+    const answer = { question: q, answer: out.answer, grounded: !!out.grounded,
       cites: out.cites || [], sources, photos, clips, mode: out.mode ?? null };
+    this.emit('ask-answer', answer);
+    if (speak && out.answer) this.speak(out.answer);
+    return answer;
   }
 
   photo(p) {

@@ -4,17 +4,22 @@ const { app, BrowserWindow, Menu, globalShortcut, ipcMain, screen } = require('e
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
+app.on('second-instance', () => { if (hub && !hub.isDestroyed()) openHub('ask'); });
+
 // kindred-capture looks for the Argmax key in the nearest .env above its working directory.
 process.chdir(__dirname);
 if (process.env.KINDRED_USER_DATA) app.setPath('userData', path.resolve(process.env.KINDRED_USER_DATA));
 
-let hub, orb, kindred, quitting = false;
+let hub, orb, chat, kindred, quitting = false;
 let startError = null;
 
-const windows = () => [hub, orb].filter((w) => w && !w.isDestroyed());
+const windows = () => [hub, orb, chat].filter((w) => w && !w.isDestroyed());
 const broadcast = (channel, payload) => { for (const w of windows()) w.webContents.send(channel, payload); };
 
 const ORB_SIZE = { width: 96, height: 96 };
+const CHAT_SIZE = { width: 600, height: 360 };
 const ORB_MARGIN = 18;
 function orbAnchor() {
   const { workArea } = screen.getPrimaryDisplay();
@@ -67,6 +72,27 @@ function createOrb() {
   return orb.loadFile(path.join(__dirname, 'orb.html'));
 }
 
+function createChat() {
+  const { centerX, bottom } = orbAnchor();
+  chat = new BrowserWindow({
+    x: centerX - CHAT_SIZE.width / 2, y: bottom - ORB_SIZE.height - CHAT_SIZE.height - 8,
+    ...CHAT_SIZE, title: 'Kindred Chat', frame: false, transparent: true,
+    resizable: false, movable: false, skipTaskbar: true, hasShadow: false,
+    alwaysOnTop: true, focusable: true, show: false, backgroundColor: '#00000000', webPreferences,
+  });
+  chat.setAlwaysOnTop(true, 'floating');
+  chat.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  lockDown(chat, 'orb.html');
+  return chat.loadFile(path.join(__dirname, 'orb.html'), { query: { chat: '1' } });
+}
+
+function openChat({ inactive = false } = {}) {
+  if (!chat || chat.isDestroyed()) return;
+  if (inactive) chat.showInactive();
+  else { chat.show(); chat.focus(); }
+  chat.webContents.send('chat:opened');
+}
+
 function openHub(view) {
   if (!hub || hub.isDestroyed()) return;
   if (hub.isMinimized()) hub.restore();
@@ -80,7 +106,7 @@ const safe = (fn) => async (_event, ...args) => {
   try { return { ok: true, value: await fn(...args) }; } catch (e) { return { ok: false, error: e.message, code: e.code || null }; }
 };
 
-app.whenReady().then(async () => {
+if (primary) app.whenReady().then(async () => {
   ipcMain.handle('kindred:status', () => kindred ? kindred.snapshot() : { starting: true, error: startError });
   ipcMain.handle('memory:check', safe(() => need().checkMemory()));
   ipcMain.handle('record:start', safe((opts) => need().startRecording(opts || {})));
@@ -90,6 +116,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('memory:people', safe(() => need().people()));
   ipcMain.handle('memory:dock', safe(() => need().dock()));
   ipcMain.handle('memory:ask', safe((q) => need().ask(q)));
+  ipcMain.handle('ask:listen-start', safe(() => need().startAskListening()));
+  ipcMain.handle('ask:listen-stop', safe(() => need().stopAskListening()));
   ipcMain.handle('voice:speak', safe((text) => need().speak(text)));
   ipcMain.handle('voice:stop', safe(() => need().stopSpeaking()));
   ipcMain.handle('hub:open', (_e, view) => { openHub(view); return true; });
@@ -107,8 +135,10 @@ app.whenReady().then(async () => {
       { label: 'Quit Kindred', click: () => { quitting = true; app.quit(); } },
     ]).popup({ window: orb });
   });
+  ipcMain.handle('chat:open', () => { openChat(); return true; });
+  ipcMain.handle('chat:close', () => { chat?.hide(); return true; });
 
-  await Promise.all([createHub(), createOrb()]);
+  await Promise.all([createHub(), createOrb(), createChat()]);
   globalShortcut.register('CommandOrControl+Shift+K', () => openHub('record'));
   try {
     const [core, bridge, live] = await Promise.all([
@@ -123,7 +153,7 @@ app.whenReady().then(async () => {
       emit: (type, payload) => {
         if (type === 'log') { console.log(`[capture] ${payload}`); return; }
         broadcast(`kindred:${type}`, payload);
-        if (type === 'whisper' && orb && !orb.isDestroyed()) orb.showInactive();
+        if (type === 'whisper') openChat({ inactive: true });
       },
     });
     await kindred.start();

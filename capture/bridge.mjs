@@ -103,12 +103,13 @@ export class CaptureBridge {
 
   /** Record a conversation. Resolves with {session, jsonl, audio, utterances, speakers} after stopRecording(). */
   /** `simulate`: path to a WAV played in as the mic (testing); recording stops at its end. */
-  async startRecording({ session, place, live, simulate } = {}) {
+  async startRecording({ session, place, live, simulate, outDir, audioDir } = {}) {
     if (this.recordingId) throw new Error('Already recording.');
     this.recordingId = -1; // reserve while models load
     try {
       await this.whenReady();
-      const { id, promise } = this.request({ cmd: 'record-start', session, place, live, simulate: simulate && path.resolve(simulate) });
+      const { id, promise } = this.request({ cmd: 'record-start', session, place, live, simulate: simulate && path.resolve(simulate),
+        outDir: outDir && path.resolve(outDir), audioDir: audioDir && path.resolve(audioDir) });
       this.recordingId = id;
       if (this.stopRequested) { this.stopRequested = false; this.send({ cmd: 'record-stop' }); }
       return await promise;

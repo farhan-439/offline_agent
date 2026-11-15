@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { writeFileSync, chmodSync, mkdtempSync, mkdirSync, readdirSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdtempSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CaptureBridge } from '../../capture/bridge.mjs';
@@ -25,17 +25,22 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   if (c.cmd === 'record-start' && c.live === false) {
     // Enrollment: like real serve with live:false — no live speaker events; on stop, a real session
     // file under data/ whose speakers come from FAKE_ENROLL (JSON array of {seconds, voiceprint}).
-    rec = { id: c.id, session: c.session };
+    rec = { id: c.id, session: c.session, outDir: c.outDir, audioDir: c.audioDir };
     out({ event: 'recording', id: c.id, session: c.session });
     out({ event: 'mic-live', id: c.id, device: 'Fake AirPods' });
   } else if (c.cmd === 'record-stop' && rec && rec.session) {
     const fs = require('node:fs'), path = require('node:path');
     if (process.env.FAKE_ENROLL_ERROR) { out({ id: rec.id, error: process.env.FAKE_ENROLL_ERROR }); rec = null; return; }
     const root = ${JSON.stringify(dir)};
-    const jsonl = path.join(root, 'data/inbox', rec.session + '.jsonl'), wav = path.join(root, 'data/audio', rec.session + '.wav');
+    const jsonl = path.join(rec.outDir || path.join(root, 'data/inbox'), rec.session + '.jsonl');
+    const wav = path.join(rec.audioDir || path.join(root, 'data/audio'), rec.session + '.wav');
     fs.mkdirSync(path.dirname(jsonl), { recursive: true });
+    fs.mkdirSync(path.dirname(wav), { recursive: true });
     const speakers = JSON.parse(process.env.FAKE_ENROLL || '[]');
-    fs.writeFileSync(jsonl, speakers.map((s, i) => JSON.stringify({ type: 'speaker', session: rec.session, speaker: 'S' + i, voiceprint: s.voiceprint, seconds: s.seconds, final: true })).join('\\n'));
+    const lines = rec.session.startsWith('ask-')
+      ? [{ type: 'utterance', session: rec.session, id: rec.session + '#0001', speaker: 'S0', start: 0, end: 2, text: 'Where is my spare key?' }]
+      : speakers.map((s, i) => ({ type: 'speaker', session: rec.session, speaker: 'S' + i, voiceprint: s.voiceprint, seconds: s.seconds, final: true }));
+    fs.writeFileSync(jsonl, lines.map((line) => JSON.stringify(line)).join('\\n'));
     fs.writeFileSync(wav, 'RIFF');
     out({ event: 'processing', id: rec.id });
     out({ id: rec.id, session: rec.session, jsonl, audio: wav, utterances: 3, speakers: speakers.length });
@@ -193,6 +198,35 @@ test('ask returns the answer, speaks it, and maps clips to playable file URLs', 
   assert.equal(b.url, null, 'missing audio is not offered for playback');
   await until(() => events.some((e) => e.type === 'speaking'));
   app.close(); await mem.close();
+});
+
+test('orb voice question is transcribed, answered aloud, and discarded without ingest', async () => {
+  const mem = await fakeMemory({ 'POST /ask': (body) => ({ answer: `The saved answer to ${body.question}`, grounded: true,
+    cites: ['N1'], sources: [{ ref: 'N1', layer: 'input', text: 'The spare key is under the flower pot.' }] }) });
+  const { app, events } = makeApp(mem.url);
+  await app.start();
+  assert.deepEqual(app.startAskListening(), { started: true });
+  await until(() => app.snapshot().ask.phase === 'listening');
+  assert.throws(() => app.startRecording(), /Already recording/);
+  assert.equal(app.stopAskListening(), true);
+  await until(() => events.some((event) => event.type === 'ask-answer'));
+  const answer = events.find((event) => event.type === 'ask-answer').payload;
+  assert.equal(answer.question, 'Where is my spare key?');
+  assert.deepEqual(answer.cites, ['N1']);
+  assert.ok(!mem.calls.some((call) => call.route === 'POST /ingest'), 'the question is not saved as a conversation');
+  await until(() => app.snapshot().ask.phase === 'idle');
+  assert.equal(readdirSync(path.join(dir, 'data/ask-tmp')).some((name) => name.startsWith('ask-')), false);
+  app.close(); await mem.close();
+});
+
+test('interrupted voice-question files are cleared when the app starts again', () => {
+  const folder = path.join(dir, 'data/ask-tmp');
+  mkdirSync(folder, { recursive: true });
+  const stale = path.join(folder, 'ask-2026-11-15T03-53-02-681Z.wav');
+  writeFileSync(stale, 'RIFF');
+  const { app } = makeApp('http://127.0.0.1:8787');
+  assert.equal(existsSync(stale), false);
+  app.close();
 });
 
 test('memory errors are surfaced, not swallowed', async () => {

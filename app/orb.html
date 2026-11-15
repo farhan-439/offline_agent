@@ -14,8 +14,15 @@
         <button id="card-close" type="button" class="close" aria-label="Dismiss">✕</button>
       </header>
       <p id="card-text" class="card-text"></p>
+      <p id="ask-status" class="ask-status" aria-live="polite"></p>
+      <form id="orb-ask-form" class="orb-ask-form" autocomplete="off">
+        <label class="sr-only" for="orb-question">Ask Kindred</label>
+        <input id="orb-question" type="text" maxlength="500" placeholder="Ask about a memory…" spellcheck="true">
+        <button id="orb-send" type="submit">Send</button>
+      </form>
+      <button id="orb-mic" type="button" class="mic">🎙 Talk to Kindred</button>
     </section>
-    <button id="orb" type="button" class="orb" aria-label="Kindred. Click to open, right-click for menu" title="Kindred  ⌘⇧K">
+    <button id="orb" type="button" class="orb" aria-label="Open Kindred conversation. Right-click for menu" title="Talk to Kindred">
       <span class="orb-core" aria-hidden="true"></span><span class="orb-glow" aria-hidden="true"></span>
       <span id="orb-rec" class="orb-rec" hidden>REC</span>
     </button>

@@ -1,13 +1,13 @@
 # app/ — Kindred desktop app (Electron)
 
-One window with three screens, plus a floating orb. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
+One hub window with three screens, a floating orb, and a small chat window opened by the orb. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
 
 | Screen | What it does |
 |---|---|
 | **Record** | One big button. While recording, a red banner, a red pulsing button and `● Recording` in the title make the recording state visible (privacy). Shows the mic in use (`mic-live`), each live voice as it's detected (`speaker`, `final:false`), and who it is once memory recognises it. On stop, the session file is sent to memory `/ingest`. |
 | **People** | "Dock today's conversations" calls memory `/dock`, then lists people from `GET /people`: name, relation and core memory card. |
-| **Ask** | Text box → memory `/ask`. The answer is shown and spoken (Argmax TTSKit, Mac voice as fallback). Each cited clip has a ▶ Play button that plays only that time range of the session WAV (`file://…wav#t=start,end`). |
-| **Orb** | Always-on-top bubble at the bottom of the screen. Shows `REC` while recording and pops up the whisper ("This is Maya, your neighbour…") when `LiveWhisper` recognises a voice. Click it to open the window, right-click for a menu. `⌘⇧K` opens Record. |
+| **Ask** | Text box → memory `/ask`. The answer is shown and spoken (Argmax TTSKit, Mac voice as fallback). Cited memory text and photos are shown, and each cited clip has a ▶ Play button for its time range. |
+| **Orb** | Always-on-top bubble at the bottom of the screen. Click it to open a conversation panel: type a question or tap **Talk to Kindred**, speak, then tap **Done speaking**. Argmax transcribes the question, Bonsai retrieves the answer, and Argmax speaks it. The temporary question recording is deleted. The orb also shows live identity whispers during conversation recording. Right-click for a menu. |
 
 ## Run
 
@@ -37,9 +37,7 @@ npm test
 
 `test/core.test.mjs` runs the real `CaptureBridge` against a fake `kindred-capture serve` script and the real `LiveWhisper` against a fake memory HTTP server. It covers: record → live voices → whisper → ingest; memory down; dock + people; ask + clip URLs; a crashed helper; and cancel. This proves the plumbing only, not real voice matching.
 
-## Not done
-
-- No hold-to-talk for Ask. `serve` has no short "transcribe this" command, and using `record-start` would write a session file into memory's inbox.
+Voice questions use capture's existing short recording path and delete the temporary audio and JSONL after transcription. They are never sent to memory `/ingest`; only the question text goes to `/ask`.
 
 ## Your voice ("Teach Kindred my voice")
 
