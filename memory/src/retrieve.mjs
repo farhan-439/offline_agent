@@ -107,7 +107,12 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
   return out;
 }
 
-function pageByRef(db, ref, query = '') {
+export function pageByRef(db, ref, query = '') {
+  if (ref.startsWith('U:')) {
+    const u = db.prepare('SELECT u.*, s.started_at FROM utterances u JOIN sessions s ON s.id = u.session WHERE u.id = ? AND u.kept = 1').get(ref.slice(2));
+    return u && { ref, layer: 'utterance', text: `"${u.text}"${u.translation ? ` [translation: ${u.translation}]` : ''}`,
+      when: u.started_at, evidence: [u.id] };
+  }
   if (/^N\d+$/.test(ref)) {
     const note = db.prepare('SELECT rowid, text, created_at FROM input_notes WHERE rowid = ?').get(Number(ref.slice(1)));
     return note && { ref, layer: 'input', text: inputExcerpt(note.text, query), when: note.created_at,

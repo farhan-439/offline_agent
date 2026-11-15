@@ -84,6 +84,8 @@ export class KindredApp {
     this.recordingTask = null;
     this.lastCaptureError = '';
     this.askState = { phase: 'idle', question: null, error: null };
+    this.askHistory = [];
+    this.askChain = Promise.resolve();
     this.askIntent = false;
     this.askListeningTask = null;
     // The app starts memory itself (and restarts it) unless one is already running.
@@ -398,10 +400,13 @@ export class KindredApp {
     }
     const summary = { session: result.session, jsonl: result.jsonl, audio: result.audio, utterances: result.utterances, speakers: result.speakers };
     let ingested = null, ingestError = null;
-    await this.checkMemory();
-    if (this.memory.ok) {
-      try { ingested = await this.live.ingest(result); } catch (e) { ingestError = e.message; }
-    } else ingestError = MEMORY_DOWN;
+    if (!result.utterances) ingestError = 'No words were transcribed, so this recording has no searchable memory. Try recording again.';
+    else {
+      await this.checkMemory();
+      if (this.memory.ok) {
+        try { ingested = await this.live.ingest(result); } catch (e) { ingestError = e.message; }
+      } else ingestError = MEMORY_DOWN;
+    }
     this.recording = { ...this.recording, mode: 'conversation', phase: 'idle', last: { ...summary, mode, ingested: !!ingested, ingestError } };
     this.changed();
     this.emit('recording-done', { ok: true, ...summary, mode, ingested: !!ingested, ingestError });
@@ -506,10 +511,18 @@ export class KindredApp {
   }
 
   async ask(question, { speak = true } = {}) {
+    const task = this.askChain.catch(() => {}).then(() => this.answerQuestion(question, { speak }));
+    this.askChain = task;
+    return task;
+  }
+
+  async answerQuestion(question, { speak = true } = {}) {
     const q = String(question ?? '').trim();
     if (!q) throw new Error('Type a question first.');
     const askedAt = Date.now();
-    const out = await this.request('/ask', { body: { question: q } });
+    const body = { question: q };
+    if (this.askHistory.length) body.history = this.askHistory;
+    const out = await this.request('/ask', { body });
     this.runLog.write('ask', { question: q, ms: Date.now() - askedAt, grounded: !!out.grounded, cites: out.cites ?? [], answer: out.answer });
     const clips = (out.clips || []).map((c) => this.clip(c));
     const photos = (out.photos || []).map((p) => this.photo(p));
@@ -518,6 +531,8 @@ export class KindredApp {
     }));
     const answer = { question: q, answer: out.answer, grounded: !!out.grounded,
       cites: out.cites || [], sources, photos, clips, mode: out.mode ?? null };
+    if (answer.grounded && answer.cites.length) this.askHistory = [...this.askHistory, { question: q, cites: answer.cites.slice(0, 4) }].slice(-3);
+    else this.askHistory = [];
     this.emit('ask-answer', answer);
     if (speak && out.answer) this.speak(out.answer);
     return answer;

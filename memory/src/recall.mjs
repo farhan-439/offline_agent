@@ -3,7 +3,7 @@
 //   · a working context of memory pages it chose to load, under a hard character budget
 // and decides each step whether to search again, open an episode, or answer with citations.
 // Old pages are evicted (oldest first) when the budget is exceeded, MemGPT's queue manager.
-import { search, hybridSearch, readEpisode, evidenceClips, evidencePhotos } from './retrieve.mjs';
+import { search, hybridSearch, pageByRef, readEpisode, evidenceClips, evidencePhotos } from './retrieve.mjs';
 import { resolveWhen } from './temporal.mjs';
 import { resolveMode } from './capabilities.mjs';
 import { proposeAction, evidenceForRef } from './actions.mjs';
@@ -197,7 +197,26 @@ export function missedFoodAllergy(question, answer, clips) {
   return null;
 }
 
-export async function ask(db, bonsai, question, { today = new Date().toISOString().slice(0, 10), onStep = () => {}, mode: forcedMode = null, persistTrace = true } = {}) {
+const FOLLOW_UP = /\b(again|it|its|that|this|those|these|they|them|he|him|his|she|her|hers|there|same|what about|and what|how about)\b/i;
+
+export function followUpContext(question, history = []) {
+  const last = Array.isArray(history) ? history.at(-1) : null;
+  if (!last || typeof last.question !== 'string' || !Array.isArray(last.cites)) return null;
+  if (!FOLLOW_UP.test(question)) return null;
+  const cites = last.cites.filter((ref) => typeof ref === 'string' && /^(?:F\d+|E\d+|N\d+|O\d+|U:[A-Za-z0-9_#:-]+|P:[A-Za-z0-9_-]+|PHOTO:[A-Za-z0-9_-]+)$/.test(ref)).slice(0, 4);
+  if (!cites.length) return null;
+  return { previousQuestion: last.question.slice(0, 500), cites, query: `${last.question.slice(0, 300)} ${question}` };
+}
+
+export async function ask(db, bonsai, question, { today = new Date().toISOString().slice(0, 10), onStep = () => {}, mode: forcedMode = null, persistTrace = true, history = [] } = {}) {
+  const followUp = followUpContext(question, history);
+  const retrievalQuestion = followUp?.query ?? question;
+  const priorPhoto = followUp?.cites.find((ref) => ref.startsWith('PHOTO:'));
+  if (priorPhoto && typeof bonsai.vision === 'function') {
+    const result = await askPhoto(db, bonsai, priorPhoto.slice(6), `Earlier question: ${followUp.previousQuestion}\nFollow-up: ${question}`);
+    if (persistTrace) saveTrace(db, question, result);
+    return result;
+  }
   // A question explicitly about the only stored photo can be answered from its pixels,
   // even when the first-pass caption omitted the detail. With several photos, normal
   // retrieval chooses a candidate or the user can specify a photo id via /ask-photo.
@@ -218,6 +237,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
   const trace = [];
   let feedback = '';
   trace.push({ step: 0, action: 'mode', mode, caps: resolved.caps, requested: resolved.requested, degraded: resolved.degraded });
+  if (followUp) trace.push({ step: 0, action: 'follow_up', previousQuestion: followUp.previousQuestion, cites: followUp.cites });
 
   // core cards are always in the prompt, so they are always "loaded" and able to be cited
   const corePages = coreMemoryPages(db);
@@ -241,13 +261,18 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
   };
 
   // retrieval-first: seed working context so a small model rarely needs more than one hop
-  if (mode === 'hybrid-rerank') load(await selectMemories(db, bonsai, question, trace));
+  if (mode === 'hybrid-rerank') load(await selectMemories(db, bonsai, retrievalQuestion, trace));
   else if (mode === 'hybrid') {
-    load(await loadByQuery(question));
-    trace.push({ step: 0, action: 'hybrid_search', query: question, loaded: pages.map((p) => p.ref) });
+    load(await loadByQuery(retrievalQuestion));
+    trace.push({ step: 0, action: 'hybrid_search', query: retrievalQuestion, loaded: pages.map((p) => p.ref) });
   } else {
-    load(search(db, question, { limit: RETRIEVAL_K }));
-    trace.push({ step: 0, action: 'search', query: question, loaded: pages.map((p) => p.ref) });
+    load(search(db, retrievalQuestion, { limit: RETRIEVAL_K }));
+    trace.push({ step: 0, action: 'search', query: retrievalQuestion, loaded: pages.map((p) => p.ref) });
+  }
+  if (followUp) {
+    const priorPages = followUp.cites.map((ref) => pageByRef(db, ref, retrievalQuestion)).filter(Boolean);
+    priorPages.forEach((page) => pinned.add(page.ref));
+    load(priorPages);
   }
   pages.slice(0, 2).forEach((page) => pinned.add(page.ref));
   onStep(trace.at(-1));
@@ -256,6 +281,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
     const final = step === MAX_STEPS;
     const user = `Today is ${today}.\nCORE MEMORY (people):\n${coreMemory(db)}\n\nWORKING MEMORY (pages loaded from disk):\n${renderPages(pages) || '(empty)'}` +
       (evicted.length ? `\n(${evicted.length} older pages were paged out: ${evicted.slice(-6).join(', ')}; search again if needed)` : '') +
+      `${followUp ? `\n\nPREVIOUS QUESTION (topic only; verify the answer from memory pages): ${followUp.previousQuestion}` : ''}` +
       `\n\nQUESTION: ${question}${feedback ? `\n${feedback}` : ''}${final ? '\nThis is your last step: you must answer now.' : ''}`;
     let out;
     try {

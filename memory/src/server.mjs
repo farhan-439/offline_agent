@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { openDb } from './db.mjs';
 import { Bonsai } from './bonsai.mjs';
 import { ingestEvents, ingestFile } from './ingest.mjs';
+import { recoverCapturedSessions } from './capture-sync.mjs';
 import { dock } from './dock.mjs';
 import { ask } from './recall.mjs';
 import { whoIsThis } from './whisper.mjs';
@@ -61,14 +62,25 @@ export function peopleGraph(db) {
   return { people, relations };
 }
 
-export function createHandler(db, bonsai) {
+export function createHandler(db, bonsai, { inbox = path.join(ROOT, 'data/inbox') } = {}) {
   let queue = Promise.resolve();
   const serial = (fn) => {
     const task = queue.then(fn);
     queue = task.catch(() => {});
     return task;
   };
-  return async (req, res) => {
+  let syncTask = null;
+  const syncCaptured = () => {
+    if (syncTask) return syncTask;
+    syncTask = serial(async () => {
+      const files = recoverCapturedSessions(db, inbox);
+      const pending = db.prepare('SELECT count(*) AS n FROM sessions WHERE docked = 0').get().n;
+      const report = pending && bonsai ? await dock(db, bonsai) : null;
+      return { ...files, report };
+    }).finally(() => { syncTask = null; });
+    return syncTask;
+  };
+  const handler = async (req, res) => {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(data));
@@ -153,13 +165,21 @@ export function createHandler(db, bonsai) {
       }
       if (url.pathname === '/ingest') {
         if (!Array.isArray(input.events) && typeof input.file !== 'string') return send(400, { error: 'events array or file required' });
-        return send(200, { sessions: await serial(() => input.events ? ingestEvents(db, input.events) : ingestFile(db, input.file)) });
+        const sessions = await serial(() => input.events ? ingestEvents(db, input.events) : ingestFile(db, input.file));
+        send(200, { sessions });
+        // Let recording stop return promptly; facts and vectors are built in the background.
+        if (bonsai) setImmediate(() => syncCaptured().catch((error) => console.error(`memory sync: ${error.message}`)));
+        return;
       }
       if (url.pathname === '/dock') return send(200, await serial(() => dock(db, bonsai)));
       if (url.pathname === '/ask') {
         if (typeof input.question !== 'string' || !input.question.trim()) return send(400, { error: 'question required' });
         if (input.mode && !MODES.includes(input.mode)) return send(400, { error: 'invalid retrieval mode' });
-        return send(200, await serial(() => ask(db, bonsai, input.question, input.mode ? { mode: input.mode } : {})));
+        const history = Array.isArray(input.history) ? input.history.slice(-3).map((turn) => ({
+          question: typeof turn?.question === 'string' ? turn.question.slice(0, 500) : '',
+          cites: Array.isArray(turn?.cites) ? turn.cites.slice(0, 4) : [],
+        })) : [];
+        return send(200, await serial(() => ask(db, bonsai, input.question, { ...(input.mode ? { mode: input.mode } : {}), history })));
       }
       if (url.pathname === '/ask-photo') {
         if (typeof input.id !== 'string' || typeof input.question !== 'string' || !input.question.trim())
@@ -177,15 +197,21 @@ export function createHandler(db, bonsai) {
       send(error.statusCode ?? 500, { error: error.message });
     }
   };
+  handler.syncCaptured = syncCaptured;
+  return handler;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const db = openDb();
   const bonsai = new Bonsai();
   const port = Number(process.env.KINDRED_PORT || 8787);
-  http.createServer(createHandler(db, bonsai)).listen(port, '127.0.0.1', async () => {
+  const handler = createHandler(db, bonsai);
+  http.createServer(handler).listen(port, '127.0.0.1', async () => {
     console.log(`Kindred memory listening on http://127.0.0.1:${port}`);
     const mode = await resolveMode(bonsai);
     console.log(`retrieval: ${describeMode(mode)}`);
+    const sync = () => handler.syncCaptured().catch((error) => console.error(`memory sync: ${error.message}`));
+    sync();
+    setInterval(sync, 30_000).unref();
   });
 }

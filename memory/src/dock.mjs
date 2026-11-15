@@ -210,6 +210,9 @@ export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = 
 
     // 3 · stage 2: Bonsai extraction per episode
     for (const ep of episodes) {
+      // A model failure after an earlier episode was saved leaves the session pending.
+      // Keep that completed episode on retry instead of duplicating its facts and citations.
+      if (db.prepare('SELECT rowid FROM episodes WHERE session = ? AND start IS ? AND end IS ?').get(s.id, ep.start, ep.end)) continue;
       const ids = new Set(ep.utterances.map((u) => u.id));
       const out = await bonsai.json({
         name: 'extract', system: EXTRACT_SYSTEM, schema: EXTRACT_SCHEMA, maxTokens: 900, temperature: 0.2,
@@ -315,6 +318,8 @@ export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = 
         }
       });
     }
+    for (const row of db.prepare('SELECT DISTINCT person_id FROM facts WHERE session = ? AND person_id IS NOT NULL').all(s.id))
+      report.people.add(row.person_id);
     db.prepare('UPDATE sessions SET docked = 1 WHERE id = ?').run(s.id);
     report.sessions.push(s.id);
   }
