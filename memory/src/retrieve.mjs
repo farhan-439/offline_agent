@@ -2,7 +2,7 @@
 //   stage A (coarse): FTS5 BM25 over facts, episode summaries, raw utterances and photo observations
 //   stage B (fine):   rerank by relevance + recency + person match, then cut to a token budget
 import { parse } from './db.mjs';
-import { nearestRefs } from './embeddings.mjs';
+import { nearestRefs, inputChunks } from './embeddings.mjs';
 
 const STOP = new Set('a an the and or but of to in on at for with about from by is are was were be been am do does did what when where who whom which how why that this these those i me my mine you your he she it they them his her their we our us said say says tell told remind there any some can could should would will just than then so if not no'.split(' '));
 
@@ -13,6 +13,19 @@ export function ftsQuery(text) {
 
 const DAY = 86_400_000;
 const recency = (iso, ref = Date.now()) => (iso ? Math.exp(-Math.max(0, ref - Date.parse(iso)) / (30 * DAY)) : 0.5);
+
+// A long direct input remains intact in storage and evidence. Recall sees the passage
+// most related to this query so one note cannot consume the whole working window.
+function inputExcerpt(text, query) {
+  if (text.length <= 900) return text;
+  const terms = (query.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .filter((term) => term.length > 2 && !STOP.has(term))
+    .map((term) => term.slice(0, Math.min(5, term.length)));
+  const chunks = inputChunks(text, 800, 160);
+  return chunks.map((chunk, index) => ({ chunk, index,
+    score: terms.reduce((score, term) => score + (chunk.toLowerCase().includes(term) ? 1 : 0), 0) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.chunk ?? text.slice(0, 800);
+}
 
 export function resolvePersonId(db, person) {
   if (!person) return null;
@@ -68,7 +81,7 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
     for (const note of db.prepare(`SELECT n.*, bm25(input_notes_fts) AS rank FROM input_notes_fts
         JOIN input_notes n ON n.rowid = input_notes_fts.rowid
         WHERE input_notes_fts MATCH ? ORDER BY rank LIMIT 40`).all(q)) {
-      items.push({ ref: `N${note.rowid}`, layer: 'input', text: note.text, when: note.created_at,
+      items.push({ ref: `N${note.rowid}`, layer: 'input', text: inputExcerpt(note.text, query), when: note.created_at,
         evidence: [], bm25: note.rank, noteId: note.rowid });
     }
   }
@@ -94,10 +107,10 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
   return out;
 }
 
-function pageByRef(db, ref) {
+function pageByRef(db, ref, query = '') {
   if (/^N\d+$/.test(ref)) {
     const note = db.prepare('SELECT rowid, text, created_at FROM input_notes WHERE rowid = ?').get(Number(ref.slice(1)));
-    return note && { ref, layer: 'input', text: note.text, when: note.created_at,
+    return note && { ref, layer: 'input', text: inputExcerpt(note.text, query), when: note.created_at,
       evidence: [], noteId: note.rowid };
   }
   if (ref.startsWith('P:')) {
@@ -140,7 +153,7 @@ export async function hybridSearch(db, bonsai, query, { person = null, k = 6, no
   } catch { semantic = []; } // runtime degradation: server restarted without --embeddings
   const candidates = new Map();
   const add = (ref, rank, source) => {
-    const page = candidates.get(ref) ?? pageByRef(db, ref);
+    const page = candidates.get(ref) ?? pageByRef(db, ref, query);
     if (!page) return;
     page.fusion = (page.fusion ?? 0) + 1 / (60 + rank);
     (page.sources ??= []).push(source);

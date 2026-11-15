@@ -6,6 +6,25 @@ const hash = (s) => createHash('sha256').update(s).digest('hex');
 const pack = (v) => Buffer.from(new Float32Array(v).buffer);
 const unpack = (b) => new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
 
+// llama.cpp can reject a long embedding input even when the text fits the chat context.
+// Keep the full input as evidence; index overlapping pieces that all resolve to its N ref.
+export function inputChunks(text, size = 480, overlap = 80) {
+  if (text.length <= size) return [text];
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + size, text.length);
+    if (end < text.length) {
+      const boundary = Math.max(text.lastIndexOf(' ', end), text.lastIndexOf('\n', end));
+      if (boundary > start + size / 2) end = boundary;
+    }
+    chunks.push(text.slice(start, end).trim());
+    if (end === text.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  return chunks.filter(Boolean);
+}
+
 export function cosineVector(a, b) {
   if (!a?.length || a.length !== b?.length) return 0;
   let dot = 0, x = 0, y = 0;
@@ -25,8 +44,10 @@ export function memoryDocuments(db) {
   for (const o of db.prepare(`SELECT o.rowid, o.kind, o.text, p.caption, p.taken_at FROM photo_observations o
       JOIN photos p ON p.id = o.photo_id`).all())
     docs.push({ ref: `O${o.rowid}`, text: `${o.caption ? `${o.caption} · ` : ''}${o.kind} · ${o.text}${o.taken_at ? ` · ${o.taken_at}` : ''}` });
-  for (const note of db.prepare('SELECT rowid, text FROM input_notes').all())
-    docs.push({ ref: `N${note.rowid}`, text: note.text });
+  for (const note of db.prepare('SELECT rowid, text FROM input_notes').all()) {
+    const chunks = inputChunks(note.text);
+    chunks.forEach((text, i) => docs.push({ ref: chunks.length === 1 ? `N${note.rowid}` : `N${note.rowid}:${i}`, text }));
+  }
   return docs;
 }
 
@@ -36,8 +57,13 @@ export async function indexMemories(db, bonsai, { batchSize = 16 } = {}) {
     const row = db.prepare('SELECT model, content_hash FROM embeddings WHERE ref = ?').get(d.ref);
     return !row || row.model !== bonsai.model || row.content_hash !== hash(d.text);
   });
-  for (let i = 0; i < pending.length; i += batchSize) {
-    const batch = pending.slice(i, i + batchSize);
+  for (let i = 0; i < pending.length;) {
+    const batch = [];
+    let chars = 0;
+    while (i < pending.length && batch.length < batchSize && (batch.length === 0 || chars + pending[i].text.length <= 1200)) {
+      batch.push(pending[i++]);
+      chars += batch.at(-1).text.length;
+    }
     const vectors = await bonsai.embed(batch.map((d) => d.text));
     for (let j = 0; j < batch.length; j++) {
       const v = vectors[j];
@@ -50,13 +76,19 @@ export async function indexMemories(db, bonsai, { batchSize = 16 } = {}) {
   }
   db.prepare("DELETE FROM embeddings WHERE ref LIKE 'F%' AND NOT EXISTS (SELECT 1 FROM facts WHERE 'F' || rowid = embeddings.ref AND status = 'active')").run();
   db.prepare("DELETE FROM embeddings WHERE ref LIKE 'O%' AND NOT EXISTS (SELECT 1 FROM photo_observations WHERE 'O' || rowid = embeddings.ref)").run();
-  db.prepare("DELETE FROM embeddings WHERE ref LIKE 'N%' AND NOT EXISTS (SELECT 1 FROM input_notes WHERE 'N' || rowid = embeddings.ref)").run();
+  const liveInputs = new Set(docs.filter((d) => d.ref.startsWith('N')).map((d) => d.ref));
+  const dropInput = db.prepare('DELETE FROM embeddings WHERE ref = ?');
+  for (const row of db.prepare("SELECT ref FROM embeddings WHERE ref LIKE 'N%'").all())
+    if (!liveInputs.has(row.ref)) dropInput.run(row.ref);
   return { indexed: pending.length, total: docs.length };
 }
 
 export function nearestRefs(db, vector, model, { limit = 20 } = {}) {
-  return db.prepare('SELECT ref, dim, vector FROM embeddings WHERE model = ?').all(model)
+  const best = new Map();
+  for (const hit of db.prepare('SELECT ref, dim, vector FROM embeddings WHERE model = ?').all(model)
     .filter((r) => r.dim === vector.length)
-    .map((r) => ({ ref: r.ref, similarity: cosineVector(vector, unpack(r.vector)) }))
-    .sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+    .map((r) => ({ ref: r.ref.replace(/^(N\d+):\d+$/, '$1'), similarity: cosineVector(vector, unpack(r.vector)) }))) {
+    if (!best.has(hit.ref) || best.get(hit.ref).similarity < hit.similarity) best.set(hit.ref, hit);
+  }
+  return [...best.values()].sort((a, b) => b.similarity - a.similarity).slice(0, limit);
 }
