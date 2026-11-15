@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS clusters (
 -- People graph
 CREATE TABLE IF NOT EXISTS people (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, relation TEXT, is_owner INTEGER NOT NULL DEFAULT 0,
-  core TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
+  core TEXT, core_fact_ids TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen TEXT
 );
 CREATE TABLE IF NOT EXISTS voices (
   person_id TEXT PRIMARY KEY REFERENCES people(id), vector TEXT NOT NULL, samples INTEGER NOT NULL
@@ -55,6 +55,51 @@ CREATE TABLE IF NOT EXISTS facts (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(text, person, kind);
 
+-- L2 · facts can involve several people (Sam's visit concerns Sam and Lily)
+CREATE TABLE IF NOT EXISTS fact_people (
+  fact INTEGER NOT NULL, person_id TEXT NOT NULL REFERENCES people(id), role TEXT,
+  PRIMARY KEY (fact, person_id)
+);
+
+-- Photo memory: the image stays as evidence; observations are grounded, searchable text
+CREATE TABLE IF NOT EXISTS photos (
+  id TEXT PRIMARY KEY, path TEXT, sha256 TEXT NOT NULL UNIQUE, mime TEXT, taken_at TEXT,
+  added_at TEXT NOT NULL, caption TEXT
+);
+CREATE TABLE IF NOT EXISTS photo_observations (
+  rowid INTEGER PRIMARY KEY, photo_id TEXT NOT NULL REFERENCES photos(id), kind TEXT NOT NULL,
+  text TEXT NOT NULL, confidence REAL, created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_observations_fts USING fts5(text);
+
+-- Direct user inputs for the local retrieval tester. Keep the exact words as evidence.
+CREATE TABLE IF NOT EXISTS input_notes (
+  rowid INTEGER PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS input_notes_fts USING fts5(text);
+
+-- Which people appear in a photo (validated names only)
+CREATE TABLE IF NOT EXISTS photo_people (
+  photo_id TEXT NOT NULL REFERENCES photos(id), person_id TEXT NOT NULL REFERENCES people(id),
+  role TEXT, PRIMARY KEY (photo_id, person_id)
+);
+
+-- Explicit user-facing actions (reminders, corrections, forgets). State changes are confirmed.
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY, text TEXT NOT NULL, due_text TEXT, due_date TEXT, person_id TEXT,
+  evidence TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_actions (
+  id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0,
+  note TEXT, created_at TEXT NOT NULL
+);
+
+-- Recall traces for the demo view: what Bonsai planned, paged in and evicted
+CREATE TABLE IF NOT EXISTS recall_traces (
+  id INTEGER PRIMARY KEY, question TEXT NOT NULL, answer TEXT, mode TEXT, grounded INTEGER,
+  trace TEXT NOT NULL, created_at TEXT NOT NULL
+);
+
 -- Bonsai-generated semantic index. A content hash makes re-indexing incremental.
 CREATE TABLE IF NOT EXISTS embeddings (
   ref TEXT PRIMARY KEY, model TEXT NOT NULL, content_hash TEXT NOT NULL,
@@ -71,6 +116,13 @@ export function openDb(file = process.env.KINDRED_DB || path.resolve(import.meta
   if (!utteranceColumns.has('translation')) db.exec('ALTER TABLE utterances ADD COLUMN translation TEXT');
   if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'when_resolved'))
     db.exec('ALTER TABLE facts ADD COLUMN when_resolved TEXT');
+  if (!db.prepare('PRAGMA table_info(facts)').all().some((c) => c.name === 'about_raw'))
+    db.exec('ALTER TABLE facts ADD COLUMN about_raw TEXT');
+  if (!db.prepare('PRAGMA table_info(people)').all().some((c) => c.name === 'core_fact_ids'))
+    db.exec('ALTER TABLE people ADD COLUMN core_fact_ids TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS fact_people_person ON fact_people(person_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS facts_person_status ON facts(person_id, status)');
+  db.exec('CREATE INDEX IF NOT EXISTS photo_obs_photo ON photo_observations(photo_id)');
   return db;
 }
 

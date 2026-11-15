@@ -278,7 +278,11 @@ export class KindredApp {
   cancelRecording() { this.bridge.cancelRecording(); return true; }
 
   // ---------- dock / people ----------
-  async people() { return this.request('/people', { method: 'GET' }); }
+  /** Memory's /people (peopleGraph: is_owner, voice_samples) → the shape the People screen uses. */
+  async people() {
+    const r = await this.request('/people', { method: 'GET' });
+    return { ...r, people: (r.people || []).map(normalisePerson) };
+  }
 
   async dock() {
     const report = await this.request('/dock');
@@ -316,6 +320,17 @@ export class KindredApp {
   stopSpeaking() { this.bridge.stopSpeaking(); return true; }
 
   close() { this.bridge.close(); }
+}
+
+export function normalisePerson(p) {
+  return {
+    ...p,
+    owner: p.owner ?? !!p.is_owner,
+    voiceSamples: p.voiceSamples ?? p.voice_samples ?? 0,
+    relation: p.relation ?? null,
+    core: p.core ?? null,
+    facts: p.facts ?? 0,
+  };
 }
 
 function idleRecording() {

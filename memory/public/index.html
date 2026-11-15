@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f6f2">
+  <title>Kindred · Input Lab</title>
+  <meta name="description" content="A local workspace for testing what Bonsai remembers.">
+  <link rel="stylesheet" href="/lab.css">
+  <script src="/lab.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Inputs">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div><strong>kindred</strong><small>INPUT LAB</small></div>
+      </div>
+
+      <div class="sidebar-main">
+        <div class="section-heading"><span>YOUR INPUTS</span><span class="count" id="input-count">0</span></div>
+        <p class="sidebar-intro">Add something you want Bonsai to remember. Your words stay intact as the source.</p>
+        <form id="input-form" class="input-form">
+          <label for="input-text">New input</label>
+          <textarea id="input-text" name="text" rows="5" maxlength="4000" placeholder="Maya asked me to water her tomato plants while she is away."></textarea>
+          <div class="input-form-footer"><span id="input-length">0 / 4,000</span><button type="submit" id="save-button">Save input <span aria-hidden="true">↗</span></button></div>
+        </form>
+        <div class="saved-heading">Saved here <span id="saved-state"></span></div>
+        <div id="input-list" class="input-list" aria-live="polite"></div>
+      </div>
+
+      <div class="sidebar-footer"><span class="privacy-dot"></span> Private to this Mac <span class="separator">·</span> Offline ready</div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div class="workspace-title"><span class="mini-mark" aria-hidden="true">✳</span><span>Memory workspace</span><span class="topbar-divider">/</span><span class="muted">Input Lab</span></div>
+        <div class="topbar-right"><span class="server-status" id="server-status"><span class="status-dot"></span> Checking Bonsai…</span></div>
+      </header>
+
+      <div class="conversation" id="conversation" aria-live="polite">
+        <div class="welcome" id="welcome">
+          <div class="welcome-symbol" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="eyebrow">A PLACE FOR THE THINGS THAT MATTER</span>
+          <h1>Give it something<br>to <em>remember.</em></h1>
+          <p>Save an input, then ask in your own words. Bonsai will search your inputs and show the exact source behind its answer.</p>
+          <div class="try-this"><span>HOW TO TRY IT</span><p>Save “The spare key is under the blue flower pot.” Then ask, “Where did I leave the house key?”</p></div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </div>
+
+      <div class="composer-wrap">
+        <form id="ask-form" class="composer">
+          <label for="question" class="sr-only">Ask Bonsai a question</label>
+          <textarea id="question" rows="1" placeholder="Ask Bonsai what it remembers…"></textarea>
+          <button type="submit" id="ask-button" aria-label="Send question"><span aria-hidden="true">↑</span></button>
+        </form>
+        <div class="composer-caption"><span>Bonsai 4B, running locally</span><label for="mode">Retrieval <select id="mode"><option value="">Auto</option><option value="bm25">Keywords</option><option value="hybrid" selected>Bonsai vectors</option><option value="hybrid-rerank">Bonsai + selection</option></select></label></div>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

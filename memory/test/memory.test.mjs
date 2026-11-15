@@ -11,7 +11,7 @@ import { dock, refreshCore, segment, sensoryFilter } from '../src/dock.mjs';
 import { resolveWhen } from '../src/temporal.mjs';
 import { search, hybridSearch, evidenceClips } from '../src/retrieve.mjs';
 import { indexMemories } from '../src/embeddings.mjs';
-import { ask, WORKING_BUDGET } from '../src/recall.mjs';
+import { ask, coreMemoryPages, WORKING_BUDGET } from '../src/recall.mjs';
 import { whoIsThis } from '../src/whisper.mjs';
 import { Bonsai } from '../src/bonsai.mjs';
 import { createHandler } from '../src/server.mjs';
@@ -98,7 +98,8 @@ test('dock builds people from speech, binds voices, and rejects ungrounded facts
   // owner was matched by voice, not created again
   assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-clinic' AND speaker = 'S0'").get().how, 'voice');
   // Maya was named by Bonsai from content, so her cluster's voiceprint is now enrolled
-  assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-porch' AND speaker = 'S1'").get().how, 'named');
+  // Maya introduces herself ("it's Maya from next door"), so the deterministic intro path binds her voice
+  assert.equal(db.prepare("SELECT how FROM clusters WHERE session = 'd1-porch' AND speaker = 'S1'").get().how, 'intro');
   assert.ok(db.prepare("SELECT core FROM people WHERE name = 'Maya'").get().core.startsWith('Maya'));
 });
 
@@ -136,7 +137,7 @@ test('recall pages memory in, validates citations, and returns audio evidence', 
   assert.deepEqual(r.cites, [real]);
   assert.ok(r.grounded);
   assert.ok(r.clips.some((c) => c.id === 'd2-call#0003' && c.speaker === 'Sam'));
-  assert.equal(r.trace[1].action, 'search');
+  assert.ok(r.trace.some((t) => t.action === 'search' && t.query));
   const prompt = bonsai.calls.filter((c) => c.name === 'recall_step').at(-1).user;
   const working = prompt.split('WORKING MEMORY')[1].split('QUESTION')[0];
   assert.ok(working.length <= WORKING_BUDGET + 200, 'working memory stays within budget');
@@ -186,8 +187,9 @@ test('Bonsai plans and filters retrieval before paged answering', async () => {
   assert.deepEqual(calls, ['plan_query', 'rerank', 'recall_step']);
   assert.equal(result.grounded, true);
   assert.ok(result.clips.some((c) => c.id === 'd1-porch#0005'));
-  assert.equal(result.trace[0].action, 'plan_query');
-  assert.equal(result.trace[1].action, 'rerank');
+  assert.ok(result.trace.some((t) => t.action === 'plan_query'));
+  assert.ok(result.trace.some((t) => t.action === 'rerank'));
+  assert.equal(result.trace[0].action, 'mode');
 });
 
 test('a core card outside the always-visible roster remains retrievable', async () => {
@@ -242,6 +244,20 @@ test('core card uses selected source facts rather than model prose', async () =>
   const core = db.prepare('SELECT core FROM people WHERE id = ?').get(lily).core;
   assert.match(core, /Allergic to peanuts/);
   assert.doesNotMatch(core, /genius|your daughter/);
+});
+
+test('a core card cites only the facts selected to build it', async () => {
+  const db = openDb(':memory:');
+  const stamp = new Date().toISOString();
+  db.prepare('INSERT INTO people (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)')
+    .run('p_alex', 'Alex', stamp, stamp);
+  const insert = db.prepare('INSERT INTO facts (person_id, kind, text, evidence, observed_at) VALUES (?, ?, ?, ?, ?)');
+  const chosen = insert.run('p_alex', 'personal', 'Alex has a blue bicycle', '["bike-line"]', stamp).lastInsertRowid;
+  insert.run('p_alex', 'health', 'Alex has a peanut allergy', '["allergy-line"]', stamp);
+  await refreshCore(db, { async json() { return { selected: [chosen], outdated: [] }; } }, 'p_alex');
+  const card = coreMemoryPages(db).find((p) => p.ref === 'P:p_alex');
+  assert.match(card.text, /blue bicycle/);
+  assert.deepEqual(card.evidence, ['bike-line']);
 });
 
 test('recall rejects a weekday absent from its cited utterance', async () => {
@@ -303,13 +319,14 @@ test('local service lists docked people read-only', async () => {
   let status, output;
   await handler(req, { writeHead(code) { status = code; }, end(text) { output = JSON.parse(text); } });
   assert.equal(status, 200);
+  // Farhan's peopleGraph() shape (is_owner, voice_samples), which the app normalises.
   const maya = output.people.find((p) => p.name === 'Maya');
   assert.ok(maya, 'Maya is listed');
   assert.equal(maya.relation, 'neighbour');
-  assert.equal(maya.owner, false);
+  assert.equal(maya.is_owner, 0);
   assert.ok(maya.facts > 0);
   assert.equal(typeof maya.core, 'string');
-  assert.equal(output.people[0].owner, true, 'owner first');
+  assert.equal(output.people[0].is_owner, 1, 'owner first');
   assert.ok(Array.isArray(output.relations));
 });
 

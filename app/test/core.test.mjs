@@ -65,7 +65,9 @@ async function fakeMemory(overrides = {}) {
     'POST /identify': (b) => (b.voiceprint[0] < 0.5 ? MAYA : { type: 'identity', personId: null, score: 0.3, whisper: null }),
     'POST /ingest': () => ({ sessions: ['s1'] }),
     'POST /dock': () => ({ sessions: ['s1'], episodes: 2, facts: 3, people: ['Maya'] }),
-    'GET /people': () => ({ people: [{ id: 'p_maya', name: 'Maya', relation: 'neighbour', owner: false, core: 'Maya lives next door.', facts: 3, voiceSamples: 1 }], relations: [] }),
+    // Same shape as memory's real peopleGraph(): is_owner / voice_samples.
+    'GET /people': () => ({ people: [{ id: 'p_me', name: 'Me', relation: 'device owner', is_owner: 1, core: null, facts: 0, voice_samples: 2 },
+      { id: 'p_maya', name: 'Maya', relation: 'neighbour', is_owner: 0, core: 'Maya lives next door.', facts: 3, voice_samples: 1 }], relations: [] }),
     'POST /ask': () => ({ answer: 'Dr. Patel raised lisinopril to 10 mg.', grounded: true, cites: [1],
       clips: [{ id: 'd1#2', speaker: 'Dr. Patel', text: "Let's go to 10 mg.", audio: 'data/audio/s1.wav', start: 31.4, end: 36.1, started_at: '2026-11-14T16:02:11Z' },
         { id: 'd1#3', speaker: 'Dr. Patel', text: 'Every morning.', audio: 'data/audio/gone.wav', start: 40, end: 42 }] }),
@@ -162,8 +164,10 @@ test('dock calls /dock then returns the people roster', async () => {
   const { app } = makeApp(mem.url);
   const r = await app.dock();
   assert.equal(r.report.facts, 3);
-  assert.equal(r.people[0].name, 'Maya');
-  assert.equal(r.people[0].relation, 'neighbour');
+  const [me, maya] = r.people;
+  assert.equal(maya.name, 'Maya');
+  assert.equal(maya.relation, 'neighbour');
+  assert.deepEqual([me.owner, me.voiceSamples, maya.owner, maya.voiceSamples], [true, 2, false, 1], 'is_owner/voice_samples normalised');
   assert.deepEqual(mem.calls.map((c) => c.route), ['POST /dock', 'GET /people']);
   app.close(); await mem.close();
 });
