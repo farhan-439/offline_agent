@@ -1,0 +1,3 @@
+#!/bin/sh
+# Start Kindred: preflight, Bonsai, then the app (which starts memory). See scripts/kindred.mjs.
+exec node "$(dirname "$0")/scripts/kindred.mjs" "$@"

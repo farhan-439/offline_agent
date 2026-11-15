@@ -19,7 +19,7 @@ npm test                                         # bridge + live-loop tests (fak
 |---|---|
 | `kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR] [--translate]` | WhisperKit (word timestamps) + SpeakerKit diarization → contract JSONL. Non-speech tags (`[BLANK_AUDIO]`, `(music)`) are stripped. |
 | `kindred-capture record [--place TEXT] [--out DIR] [--audio-dir DIR] [--seconds N]` | Mic → 16 kHz WAV in `data/audio/<session>.wav` until Enter (or N s), then `process`. Falls back to the built-in mic if AirPods/Bluetooth send only silence. |
-| `kindred-capture speak "<text>" [--language fr] [--voice NAME] [--out file.wav]` | Argmax TTSKit (Qwen3-TTS 0.6B). English voice `ryan` (`KINDRED_VOICE=aiden` for the other). `--language` takes any of Qwen3-TTS's 10: en, es, fr, de, it, pt, ru, zh, ja, ko; zh/ja/ko use the native voices vivian / ono-anna / sohee, the rest use the English voice. `--out` writes a 24 kHz WAV instead of playing. `serve`'s `speak` command takes the same `language`, plus `saveTo` and `play:false`. |
+| `kindred-capture speak "<text>" [--language fr] [--voice NAME] [--out file.wav]` | Argmax TTSKit (Qwen3-TTS 0.6B). English voice `aiden` (`KINDRED_VOICE=ryan` for the other). `--language` takes any of Qwen3-TTS's 10: en, es, fr, de, it, pt, ru, zh, ja, ko; zh/ja/ko use the native voices vivian / ono-anna / sohee, the rest use the default voice. `--out` writes a 24 kHz WAV instead of playing. `serve`'s `speak` command takes the same `language`, plus `saveTo` and `play:false`. |
 | `kindred-capture serve [--out DIR] [--audio-dir DIR] [--no-tts 1] [--no-translate 1]` | Long-lived JSON-lines server: models load **once**. Protocol in `Sources/KindredCapture/Server.swift`. |
 | `kindred-capture provision [--only whisper-multi]` | Run once with Wi-Fi on. Downloads all models into `~/Library/Caches/Kindred/hub` and links the folders below. |
 | `kindred-capture license` | Argmax Pro license status as JSON (never prints the key). |
@@ -170,3 +170,29 @@ During a `translate` recording:
 - While a reply is being recorded, and while `speak` plays (+0.6 s echo tail), `LiveTranslator` skips chunks that are at least 40% inside those windows (`Muter` in `Translate.swift`). This keeps the owner's English and Kindred's own spoken French out of the live translations.
 - **Verified 11/15 on a simulated French–English–French conversation:** both French lines were translated, the English reply was muted live and transcribed exactly in 0.15 s, and a French line captured during a reply was muted.
 - Bridge: `replyStart()`, `replyStop()`, `replyCancel()`, `speakIn(text, language)`.
+
+## Voice: aiden + calm sampling (default since 11/15)
+
+Ryan sometimes laughed, made noises or kept going past the words. On 8 typical Kindred lines × 3 takes each, Whisper transcribed every clip, and a clip counted as bad if it ran more than 1.5× too long or lost or added words:
+
+| Setting | Bad clips (of 24) | Median length vs needed | Words missing |
+|---|---|---|---|
+| ryan, temperature 0.9, top-K 50 (old default) | 9 (2 were pure noise) | 1.44× | 14% |
+| ryan, 0.5 / 20 | 7 | 1.35× | 19% |
+| ryan, 0.3 / 10 | 7 | 1.34× | 6% |
+| **aiden, 0.5 / 20 (new default)** | **1** | **1.06×** | **4%** |
+
+The defaults are now voice `aiden`, temperature 0.5, top-K 20, repetition penalty 1.1, and a token budget of 0.9 per character. You can override them with `KINDRED_VOICE`, `KINDRED_TTS_TEMPERATURE`, `KINDRED_TTS_TOPK`, `KINDRED_TTS_PENALTY` and `KINDRED_TTS_BUDGET`. Qwen3-TTS **1.7B** (TTSKit `.qwen3TTS_1_7b`) would also accept a style instruction ("calm, neutral"), but it is about 3× bigger and slower, so it isn't used.
+
+## Kindred's own voice is never recorded as someone else
+
+Every recording has a `Muter`. While `speak` plays through a **loudspeaker**, that stretch plus a 0.6 s echo tail is marked. Anything mostly inside it is dropped from:
+- the saved session file (so memory never docks Kindred's own words)
+- live voiceprints
+- live translation
+
+With earbuds (Bluetooth, or an output named headphones/AirPods/Buds) the mic can't hear Kindred, so nothing is dropped and no real speech is lost. `KINDRED_SELF_FILTER=always|never` overrides the detection.
+
+**Verified 11/15:** the porch conversation was played in as the mic, and Kindred spoke a whisper out loud at about 10 s. The 5 segments the mic heard during that line were dropped; everything around them was kept.
+
+**Reply languages with the new voice (11/15):** the same 40 Bonsai translations were spoken again and heard back by Whisper. French went from 8/10 to **10/10** clips heard as French; the two garbled clips with ryan were both clean with aiden. Audio was 15–30% shorter per character for es/fr/de (less rambling). zh is unchanged (it uses the native vivian voice). The remaining meaning errors come from Bonsai's translation or the back-translation, not the voice: "nuts" for peanuts (es), the drug name, "10 p.m." (zh).

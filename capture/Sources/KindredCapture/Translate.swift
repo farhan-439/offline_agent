@@ -160,21 +160,44 @@ func speechChunks(_ audio: [Float]) -> [SpeechChunk] {
 
 // MARK: Muting (two-way replies)
 
-/// Stretches of the recording live translation must ignore, in sample indices on the recording's
-/// timeline: while Kindred itself is speaking (+ a short tail for room echo), and while the owner
-/// records a reply. Otherwise Kindred's spoken French would be "heard" and translated back.
+/// Stretches of a recording, in sample indices on its own timeline, that are not the other people:
+///   "speaking": Kindred itself is talking through a loudspeaker (+ a short tail for room echo), so the
+///               mic hears Kindred (a whisper, a translation, a spoken reply);
+///   "reply":    the owner is recording a two-way reply.
+/// Live translation skips both; live voiceprints and the saved session drop "speaking" stretches, so
+/// Kindred's own voice is never transcribed, docked or enrolled as someone else.
 final class Muter: @unchecked Sendable {
     private let lock = NSLock()
-    private var windows: [(start: Int, end: Int)] = []   // closed
-    private var open: [String: Int] = [:]                  // reason → start
+    private var windows: [(start: Int, end: Int, reason: String)] = []   // closed
+    private var open: [String: Int] = [:]                                  // reason → start
     func begin(_ reason: String, at index: Int) { lock.withLock { if open[reason] == nil { open[reason] = index } } }
-    func end(_ reason: String, at index: Int) { lock.withLock { if let s = open.removeValue(forKey: reason) { windows.append((s, max(s, index))) } } }
+    func end(_ reason: String, at index: Int) { lock.withLock { if let s = open.removeValue(forKey: reason) { windows.append((s, max(s, index), reason)) } } }
     /// Fraction of [start, end) inside a muted stretch (open stretches count as running to the end).
-    func mutedFraction(_ start: Int, _ end: Int) -> Double {
+    /// `reasons`: only those kinds of stretch (nil = all).
+    func mutedFraction(_ start: Int, _ end: Int, reasons: Set<String>? = nil) -> Double {
         guard end > start else { return 0 }
-        let spans = lock.withLock { windows + open.values.map { ($0, Int.max) } }
+        let spans = lock.withLock { windows + open.map { ($0.value, Int.max, $0.key) } }
+            .filter { reasons?.contains($0.2) ?? true }
         let covered = spans.reduce(0) { $0 + max(0, min(end, $1.1) - max(start, $1.0)) }
         return min(1, Double(covered) / Double(end - start))
+    }
+    /// Seconds-based helper for session segments (16 kHz).
+    func isSelfSpeech(_ start: Float, _ end: Float) -> Bool {
+        mutedFraction(Int(start * 16000), Int(end * 16000), reasons: ["speaking"]) >= 0.5
+    }
+    var speakingWindows: Int { lock.withLock { windows.filter { $0.reason == "speaking" }.count } }
+}
+
+/// Is Kindred's voice going to a loudspeaker the mic can hear? Earbuds/headphones: no, so nothing needs
+/// dropping. KINDRED_SELF_FILTER=always|never overrides.
+func outputIsLoudspeaker() -> Bool {
+    switch env("KINDRED_SELF_FILTER") {
+        case "always": return true
+        case "never": return false
+        default:
+            let name = defaultOutputDeviceName().lowercased()
+            if ["headphone", "airpods", "buds", "earphone", "headset", "beats"].contains(where: { name.contains($0) }) { return false }
+            return !defaultOutputIsBluetooth()
     }
 }
 

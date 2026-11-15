@@ -20,7 +20,7 @@ export class CaptureBridge {
     binary = process.env.KINDRED_CAPTURE_BIN || path.join(here, '.build/release/kindred-capture'),
     outDir = path.join(repoRoot, 'data/inbox'),
     audioDir = path.join(repoRoot, 'data/audio'),
-    voice = process.env.KINDRED_VOICE || 'ryan',
+    voice = process.env.KINDRED_VOICE || 'aiden', // calm native-English voice (ryan rambled/laughed in testing)
     sayBinary = '/usr/bin/say',
     tts = process.env.KINDRED_TTS !== 'system',
     onEvent = () => {},

@@ -43,7 +43,8 @@ func ownVoiceprint(embedder: SpeakerKit, clip: [Float]) async -> [Float]? {
 struct SessionResult { let session: String; let jsonl: URL; let audio: String; let utterances: Int; let speakers: Int; var translated: Int? = nil }
 
 func writeSession(audio: [Float], audioPath: String, session: String, place: String?, startedAt: Date,
-                  outDir: URL, whisper: WhisperKit, speakers: SpeakerKit, multilingual: WhisperKit? = nil) async throws -> SessionResult {
+                  outDir: URL, whisper: WhisperKit, speakers: SpeakerKit, multilingual: WhisperKit? = nil,
+                  muter: Muter? = nil) async throws -> SessionResult {
     try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
     let outURL = outDir.appendingPathComponent("\(session).jsonl")
     FileManager.default.createFile(atPath: outURL.path, contents: nil)
@@ -53,7 +54,9 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
     try emit(["type": "session_start", "session": session, "startedAt": iso(startedAt), "place": place], to: out)
     Out.log("audio: \(String(format: "%.1f", Double(audio.count) / 16000)) s")
 
-    var n = 0, translated = 0
+    var n = 0, translated = 0, dropped = 0
+    // Kindred's own voice heard through the speaker (Muter "speaking"): never written, docked or enrolled.
+    let isSelf = { (start: Float, end: Float) -> Bool in muter?.isSelfSpeech(start, end) ?? false }
     var seconds: [Int: Float] = [:]
     var ranges: [Int: [(start: Float, end: Float)]] = [:]
     let d: DiarizationResult
@@ -63,6 +66,7 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
         d = try await speakers.diarize(audioArray: audio, options: sessionDiarizationOptions())
         let segs = d.segments.compactMap { s in s.speaker.speakerId.map { (speaker: $0, start: s.startTime, end: s.endTime) } }
         for u in await translatedUtterances(multilingual, audio: audio, segments: segs) {
+            if isSelf(u.start, u.end) { dropped += 1; continue }
             n += 1
             if u.translation != nil { translated += 1 }
             seconds[u.speaker, default: 0] += u.end - u.start
@@ -84,6 +88,7 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
             for seg in segments {
                 let text = cleanTranscript(seg.text)
                 guard !text.isEmpty, let sid = seg.speaker.speakerId else { continue }
+                if isSelf(seg.startTime, seg.endTime) { dropped += 1; continue }
                 n += 1
                 seconds[sid, default: 0] += seg.endTime - seg.startTime
                 ranges[sid, default: []].append((seg.startTime, seg.endTime))
@@ -109,6 +114,7 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
     }
     try emit(["type": "session_end", "session": session, "endedAt": iso(startedAt.addingTimeInterval(Double(audio.count) / 16000))], to: out)
     Out.log("wrote \(n) utterances, \(seconds.count) speakers → \(outURL.path)")
+    if dropped > 0 { Out.log("dropped \(dropped) segment(s) of Kindred's own voice (heard through the speaker)") }
     return SessionResult(session: session, jsonl: outURL, audio: audioPath, utterances: n, speakers: seconds.count,
                          translated: multilingual == nil ? nil : translated)
 }

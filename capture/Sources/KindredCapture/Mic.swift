@@ -20,6 +20,17 @@ func defaultOutputDeviceName() -> String {
     return name.takeRetainedValue() as String
 }
 
+/// Is the default output a Bluetooth device (AirPods, a headset)? Then the mic can't hear Kindred's voice.
+func defaultOutputIsBluetooth() -> Bool {
+    var device = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return false }
+    var transport: UInt32 = 0, tsize = UInt32(MemoryLayout<UInt32>.size)
+    var taddr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    guard AudioObjectGetPropertyData(device, &taddr, 0, nil, &tsize, &transport) == noErr else { return false }
+    return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+}
+
 struct InputDevice { let id: AudioDeviceID; let name: String; let builtIn: Bool }
 func inputDevices() -> [InputDevice] {
     var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)

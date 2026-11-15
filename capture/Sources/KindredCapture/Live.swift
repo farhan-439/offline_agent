@@ -34,6 +34,9 @@ final class LiveSpeakers: @unchecked Sendable {
     private var task: Task<Void, Never>?
     private var continuation: AsyncStream<[Float]>.Continuation?
 
+    /// Kindred's own voice through the speaker: kept out of live voiceprints.
+    var muter: Muter?
+
     init(id: Any?, session: String, mic: MicCapture, embedder: SpeakerKit) {
         self.id = id; self.session = session; self.mic = mic; self.embedder = embedder
     }
@@ -93,6 +96,8 @@ final class LiveSpeakers: @unchecked Sendable {
                 let all = mic.samples.get()
                 let window = Int(8 * LiveSpeakers.sampleRate)
                 guard all.count > Int(LiveSpeakers.firstSeconds * Double(LiveSpeakers.sampleRate)) else { continue }
+                // Skip windows that are mostly Kindred talking through the speaker.
+                if let muter, muter.mutedFraction(max(0, all.count - window), all.count, reasons: ["speaking"]) > 0.3 { continue }
                 let clip = Array(all.suffix(window))
                 guard let result = try? await embedder.diarize(audioArray: clip) else { continue }
                 for (sid, centroid) in result.speakerCentroidEmbeddings {
@@ -120,7 +125,10 @@ final class LiveSpeakers: @unchecked Sendable {
 
     // MARK: Voiceprint for one speaker
 
-    private func consider(label: String, ranges: [(start: Float, end: Float)], engine: String) {
+    private func consider(label: String, ranges allRanges: [(start: Float, end: Float)], engine: String) {
+        let ranges = allRanges.filter { r in
+            muter.map { $0.mutedFraction(streamOffset + Int(r.start * LiveSpeakers.sampleRate), streamOffset + Int(r.end * LiveSpeakers.sampleRate), reasons: ["speaking"]) < 0.5 } ?? true
+        }
         let total = ranges.reduce(0) { $0 + Double($1.end - $1.start) }
         let last = emitted.get()[label]
         // Due when a checkpoint lies between the last emission and now. (LiveWhisper ignores labels

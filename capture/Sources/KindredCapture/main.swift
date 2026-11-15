@@ -6,7 +6,7 @@
 //   kindred-capture record [--session ID] [--place TEXT] [--out data/inbox] [--audio-dir data/audio] [--seconds N]
 //       record the mic until Enter (or N seconds), save the WAV, then process it as above
 //   kindred-capture speak "<text>"
-//       say a line with TTSKit (Qwen3-TTS, voice "ryan")
+//       say a line with TTSKit (Qwen3-TTS, voice "aiden", calm sampling)
 //   kindred-capture serve [--out data/inbox] [--audio-dir data/audio] [--no-tts 1] [--no-translate 1]
 //       long-lived JSON-lines server (models load once); see Server.swift / bridge.mjs
 //
