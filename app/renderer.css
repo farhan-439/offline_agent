@@ -108,6 +108,40 @@ button, input { -webkit-app-region: no-drag; }
 .person .core { margin: 8px 0 0; font-size: 14.5px; line-height: 1.55; color: var(--ink-2); }
 .person .stats { margin: 7px 0 0; font-size: 12px; color: var(--ink-3); }
 
+/* ---------- capture: the stone, and what it will do ---------- */
+.capture { gap: 18px; }
+.mode-line { margin: 0; font-size: 15px; color: var(--ink-2); text-align: center; }
+.modes { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.mode { padding: 8px 16px; border-radius: 9px; font-size: 13.5px; font-weight: 550; color: var(--ink-2); min-height: 38px; }
+.mode:hover { background: var(--line-2); }
+.mode[aria-selected="true"] { background: var(--ink); color: #fff; }
+.ask-panel { width: 100%; max-width: 520px; }
+.ask-panel .composer { margin: 0; }
+
+/* ---------- memory: layers and threads ---------- */
+#view-memory { max-width: 1000px; }
+.mem-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.mem-head h1 { margin: 0 0 4px; font-size: 19px; font-weight: 600; }
+.mem-head .row { margin: 0; }
+.strata-wrap { flex: 0 0 auto; margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--line-2); overflow-x: auto; }
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(205px, 1fr); gap: 14px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.mcol { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 2px solid var(--line); min-width: 0; }
+.mcol > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 2px; }
+.mcol .who { font-size: 13.5px; font-weight: 600; }
+.mcol .n { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.mcard { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+.mcard:hover { border-color: rgba(78, 107, 87, .45); }
+.mcard .tag { display: block; font-size: 9.5px; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 3px; }
+.mcard .fact { display: block; font-size: 13px; line-height: 1.45; color: var(--ink); }
+.mcard .quote { display: block; margin-top: 5px; font-size: 11.5px; line-height: 1.4; font-style: italic; color: var(--ink-3); }
+.mcard.core { background: var(--tint); border-color: transparent; }
+.mcard.core .fact { font-size: 13px; color: var(--ink-2); }
+.mem-detail { margin-top: 10px; padding: 14px 16px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.mem-detail h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.mem-detail p { margin: 0 0 8px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2); }
+.mem-detail .quote { color: var(--ink-3); font-style: italic; }
+.mem-detail .meta { display: flex; gap: 12px; font-size: 11.5px; color: var(--ink-3); }
+
 /* ---------- capture: only the stone ---------- */
 .stone { width: 140px; height: 140px; display: grid; place-items: center; border-radius: 34px; }
 .stone > span { display: block; filter: drop-shadow(0 8px 18px rgba(58, 74, 60, .18)); transition: transform .2s ease; }

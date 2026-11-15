@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="renderer.css">
 </head>
 <body>
-<div id="app" class="app" data-view="chat" data-phase="idle">
+<div id="app" class="app" data-view="capture" data-phase="idle" data-mode="record">
 
   <header class="bar drag">
     <span class="mark" id="brand-mark"></span>
@@ -22,20 +22,47 @@
 
   <div class="shell">
     <nav class="rail" aria-label="Pebble">
+      <button class="nav" type="button" data-view="capture" aria-label="Capture" title="Capture">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+      </button>
       <button class="nav" type="button" data-view="chat" aria-label="Chat" title="Chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3V5Z"/></svg>
       </button>
-      <button class="nav" type="button" data-view="people" aria-label="People" title="People">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16.5 6.2a3 3 0 0 1 0 5.6M17.5 14.4c2 .5 3.2 2.1 3.6 4.6"/></svg>
-      </button>
-      <button class="nav" type="button" data-view="capture" aria-label="Capture" title="Capture">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+      <button class="nav" type="button" data-view="memory" aria-label="Memory" title="Memory">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="M3 12.5 12 17l9-4.5M3 17.5 12 22l9-4.5"/></svg>
       </button>
     </nav>
 
     <main class="main">
+      <!-- ===== Capture: the main page. The stone, and what it will do. ===== -->
+      <section id="view-capture" class="view capture" aria-label="Capture">
+        <button id="record-btn" class="stone" type="button" aria-pressed="false" aria-label="Start recording">
+          <span id="stone-mark"></span>
+        </button>
+
+        <p id="mode-line" class="mode-line">Tap to record</p>
+
+        <div class="modes" role="tablist" aria-label="What should the stone do?">
+          <button class="mode" type="button" data-mode="record" role="tab" aria-selected="true">Record</button>
+          <button class="mode" type="button" data-mode="ask" role="tab" aria-selected="false">Ask</button>
+          <button class="mode" type="button" data-mode="translate" role="tab" aria-selected="false">Translate</button>
+        </div>
+
+        <div id="ask-panel" class="ask-panel" hidden>
+          <form id="quick-form" class="composer" autocomplete="off">
+            <button id="mic-btn" class="mic" type="button" aria-label="Ask by voice"><span id="mic-mark"></span></button>
+            <label class="sr-only" for="quick-input">Your question</label>
+            <input id="quick-input" maxlength="500" placeholder="Ask…" spellcheck="true">
+            <button id="quick-send" type="submit" aria-label="Send">↑</button>
+          </form>
+        </div>
+
+        <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
+        <p id="record-result" class="fine" role="status" hidden></p>
+      </section>
+
       <!-- ===== Chat ===== -->
-      <section id="view-chat" class="view" aria-label="Chat">
+      <section id="view-chat" class="view" aria-label="Chat" hidden>
         <div id="thread" class="thread">
           <div id="empty" class="empty">
             <p>Ask about anything you've talked about.</p>
@@ -46,32 +73,32 @@
           </div>
         </div>
         <form id="ask-form" class="composer" autocomplete="off">
-          <button id="mic-btn" class="mic" type="button" aria-label="Ask by voice"><span id="mic-mark"></span></button>
           <label class="sr-only" for="ask-input">Your question</label>
           <input id="ask-input" maxlength="500" placeholder="Ask…" spellcheck="true">
           <button id="ask-send" type="submit" aria-label="Send">↑</button>
         </form>
       </section>
 
-      <!-- ===== People ===== -->
-      <section id="view-people" class="view page" aria-label="People" hidden>
-        <div class="row">
-          <button id="dock-btn" type="button" class="quiet">Dock today</button>
-          <button id="enroll-btn" type="button" class="quiet">My voice</button>
+      <!-- ===== Memory: the layers, and how they connect ===== -->
+      <section id="view-memory" class="view page" aria-label="Memory" hidden>
+        <div class="mem-head">
+          <div>
+            <h1>Memory</h1>
+            <p id="mem-summary" class="fine">Reading what Pebble keeps…</p>
+          </div>
+          <div class="row">
+            <button id="dock-btn" type="button" class="quiet">Dock today</button>
+            <button id="enroll-btn" type="button" class="quiet">My voice</button>
+          </div>
         </div>
-        <p id="dock-status" class="fine" hidden></p>
-        <ul id="people" class="people"></ul>
-        <p id="people-empty" class="fine" hidden>No one here yet. Record a conversation, then dock.</p>
-      </section>
 
-      <!-- ===== Capture: just the stone ===== -->
-      <section id="view-capture" class="view capture" aria-label="Capture" hidden>
-        <button id="record-btn" class="stone" type="button" aria-pressed="false" aria-label="Start recording">
-          <span id="stone-mark"></span>
-        </button>
-        <p id="record-hint" class="fine">Tap to record</p>
-        <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
-        <p id="record-result" class="fine" role="status" hidden></p>
+        <div class="strata-wrap">
+          <div id="strata" class="strata"></div>
+          <p id="strata-empty" class="fine" hidden>Nothing stored yet. Record a conversation, then dock.</p>
+        </div>
+        <div id="memory-detail" class="mem-detail" hidden></div>
+
+        <p id="dock-status" class="fine" hidden></p>
       </section>
     </main>
   </div>

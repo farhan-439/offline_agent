@@ -73,6 +73,9 @@ async function fakeMemory(overrides = {}) {
     // Same shape as memory's real peopleGraph(): is_owner / voice_samples.
     'GET /people': () => ({ people: [{ id: 'p_me', name: 'Me', relation: 'device owner', is_owner: 1, core: null, facts: 0, voice_samples: 2 },
       { id: 'p_maya', name: 'Maya', relation: 'neighbour', is_owner: 0, core: 'Maya lives next door.', facts: 3, voice_samples: 1 }], relations: [] }),
+    'GET /memories': () => ({ memories: [
+      { ref: 'F1', text: 'Maya is away until Sunday.', kind: 'task', uses: 2, createdAt: '2026-11-12T09:00:00Z',
+        person: { id: 'p_maya', name: 'Maya' }, source: { quote: { text: 'Could you water my tomatoes?' } } }] }),
     'POST /ask': () => ({ answer: 'Dr. Patel raised lisinopril to 10 mg.', grounded: true, cites: [1],
       sources: [{ ref: 'F1', layer: 'fact', text: 'Dr. Patel raised lisinopril to 10 mg.', when: '2026-11-14T16:02:11Z' }],
       photos: [{ id: 'P1', caption: 'The prescription label', taken_at: '2026-11-14T16:02:11Z' }],
@@ -84,7 +87,9 @@ async function fakeMemory(overrides = {}) {
     let text = ''; for await (const c of req) text += c;
     const body = text ? JSON.parse(text) : null;
     calls.push({ route: `${req.method} ${req.url}`, body });
-    const fn = routes[`${req.method} ${req.url}`];
+    // Exact URL first (some tests assert query strings), then the path alone.
+    const pathOnly = String(req.url).split('?')[0];
+    const fn = routes[`${req.method} ${req.url}`] ?? routes[`${req.method} ${pathOnly}`];
     const data = fn ? await fn(body) : { error: 'unknown route' };
     const status = !fn ? 404 : data instanceof Error ? 500 : 200;
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -231,6 +236,19 @@ test('intent: a tap hears the words, and does not answer them on its own', async
   assert.ok(!mem.calls.some((call) => call.route === 'POST /ask'), 'the decision belongs to the caller');
   await until(() => app.snapshot().ask.phase === 'idle');
   assert.ok(!mem.calls.some((call) => call.route === 'POST /ingest'), 'a tap is never saved as a conversation');
+  app.close(); await mem.close();
+});
+
+test('memories: the layered map reads facts, people and their spoken source', async () => {
+  const mem = await fakeMemory();
+  const { app } = makeApp(mem.url);
+  await app.start();
+  const { memories } = await app.memories();
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].text, 'Maya is away until Sunday.');
+  assert.equal(memories[0].person.name, 'Maya');
+  assert.equal(memories[0].source.quote.text, 'Could you water my tomatoes?');
+  assert.ok(mem.calls.some((c) => c.route === 'GET /memories?limit=200'), 'asks memory for the whole layer set');
   app.close(); await mem.close();
 });
 

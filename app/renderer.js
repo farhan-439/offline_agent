@@ -1,4 +1,4 @@
-// Pebble's main window: the conversation, the people it remembers, and the stone that records.
+// Pebble's main window: the stone that records, the conversation, and the memory layers.
 import { recordButtonState, enrollButtonState, dockSummary, formatClipTime } from './view.mjs';
 import { markSVG, mountMark } from './mark.mjs';
 
@@ -8,14 +8,17 @@ const app = $('#app');
 const thread = $('#thread');
 const empty = $('#empty');
 
-mountMark(document.querySelector('#brand-mark'), 22);
-mountMark(document.querySelector('#mic-mark'), 26);
-mountMark(document.querySelector('#stone-mark'), 124);
+mountMark($('#brand-mark'), 22);
+mountMark($('#mic-mark'), 26);
+mountMark($('#stone-mark'), 124);
 
 let snap = null;
+let mode = 'record';           // 'record' | 'ask' | 'translate' — what the stone does when tapped
 let ownerVoiceKnown = false;
 let pendingTurn = null;
 let lastAnswer = '';
+let memories = [];
+let people = [];
 
 // ---------- navigation ----------
 function show(view) {
@@ -24,14 +27,57 @@ function show(view) {
     const on = nav.dataset.view === view;
     if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
   }
-  for (const v of ['chat', 'people', 'capture']) $(`#view-${v}`).hidden = v !== view;
-  if (view === 'people') loadPeople();
+  for (const v of ['capture', 'chat', 'memory']) $(`#view-${v}`).hidden = v !== view;
+  if (view === 'memory') loadMemory();
   if (view === 'chat') $('#ask-input').focus();
+  if (view === 'capture' && mode === 'ask') $('#quick-input').focus();
 }
 for (const nav of document.querySelectorAll('.nav')) nav.addEventListener('click', () => show(nav.dataset.view));
-api.onNavigate((view) => show(typeof view === 'string' ? view : 'chat'));
+api.onNavigate((view) => show(typeof view === 'string' ? view : 'capture'));
 
-// ---------- the stone ----------
+// ---------- the stone: what it does when you tap it ----------
+function setMode(next) {
+  mode = next;
+  app.dataset.mode = mode;
+  for (const b of document.querySelectorAll('.mode')) b.setAttribute('aria-selected', String(b.dataset.mode === mode));
+  $('#ask-panel').hidden = mode !== 'ask';
+  if (mode === 'ask') $('#quick-input').focus();
+  renderMode();
+}
+for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => setMode(b.dataset.mode));
+
+function capturing(rec = {}) {
+  return rec.phase === 'starting' || rec.phase === 'recording';
+}
+
+function renderMode() {
+  const rec = snap?.recording || {};
+  const busy = ['starting', 'recording', 'processing'].includes(rec.phase) && rec.mode !== 'enroll';
+  const translating = rec.mode === 'translate' && busy;
+  const t = rec.startedAt ? ` · ${Math.floor((Date.now() - rec.startedAt) / 60000)}:${String(Math.floor((Date.now() - rec.startedAt) / 1000) % 60).padStart(2, '0')}` : '';
+
+  const line = $('#mode-line');
+  if (mode === 'ask') line.textContent = 'Type a question, or speak it';
+  else if (mode === 'translate') line.textContent = translating ? `Translating${t}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
+  else line.textContent = capturing(rec) ? `Recording${t}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to record';
+
+  const enrolling = rec.mode === 'enroll' && rec.phase !== 'idle';
+  $('#record-btn').disabled = rec.phase === 'processing' || enrolling;
+  $('#record-btn').setAttribute('aria-pressed', String(capturing(rec)));
+  $('#record-btn').classList.toggle('is-speaking', ['starting', 'recording', 'processing'].includes(rec.phase));
+  for (const b of document.querySelectorAll('.mode')) b.disabled = busy;
+}
+
+$('#record-btn').addEventListener('click', async () => {
+  const phase = snap?.recording?.phase || 'idle';
+  if (phase === 'starting' || phase === 'recording') { await api.stopRecording(); return; }
+  if (phase === 'processing') return;
+  if (mode === 'ask') { $('#quick-input').focus(); return; }
+  const r = await api.startRecording(mode === 'translate' ? { mode: 'translate' } : {});
+  if (!r.ok) result(r.error);
+});
+
+// ---------- status ----------
 function render(next) {
   if (!next) return;
   if (next.error && !next.memory) return;
@@ -43,39 +89,24 @@ function render(next) {
   $('#status-text').textContent = memory.ok ? 'Local' : 'Memory offline';
 
   const enrolling = recording.mode === 'enroll' && recording.phase !== 'idle';
-  const btn = enrolling
-    ? { hint: 'Recording your voice on the People screen…', disabled: true, pressed: false }
-    : recordButtonState(recording.phase, capture);
   app.dataset.phase = recording.phase;
-  // The mark waves while the stone is recording or finishing a recording.
-  $('#record-btn').classList.toggle('is-speaking', ['starting', 'recording', 'processing'].includes(recording.phase));
-  $('#record-hint').textContent = btn.hint;
-  $('#record-btn').disabled = btn.disabled;
-  $('#record-btn').setAttribute('aria-pressed', String(btn.pressed));
-  document.title = recording.phase === 'recording' || recording.phase === 'starting' ? '● Recording — Pebble' : 'Pebble';
+  document.title = capturing(recording) ? '● Recording — Pebble' : 'Pebble';
+  renderMode();
+  renderEnroll(recording, capture);
 
-  if (next.whisper && (recording.phase === 'recording' || recording.phase === 'starting')) {
+  if (next.whisper && capturing(recording)) {
     $('#whisper').hidden = false;
     $('#whisper').textContent = next.whisper.text;
-  } else if (recording.phase !== 'recording' && recording.phase !== 'starting') {
+  } else if (!capturing(recording)) {
     $('#whisper').hidden = true;
   }
-  renderEnroll(recording, capture);
 }
 api.onStatus(render);
 api.status().then(render);
 api.onWhisper((w) => { $('#whisper').hidden = false; $('#whisper').textContent = w.text; });
 $('#status').addEventListener('click', () => api.checkMemory());
+setInterval(() => { if (snap && capturing(snap.recording)) renderMode(); }, 1000);
 
-$('#record-btn').addEventListener('click', async () => {
-  const phase = snap?.recording.phase;
-  if (phase === 'idle') {
-    const r = await api.startRecording({});
-    if (!r.ok) result(r.error);
-  } else if (phase === 'starting' || phase === 'recording') {
-    await api.stopRecording();
-  }
-});
 function result(text) { $('#record-result').hidden = !text; $('#record-result').textContent = text; }
 api.onRecordingDone((r) => {
   if (!r.ok) { if (!r.cancelled) result(r.error); return; }
@@ -100,19 +131,21 @@ api.onEnrollDone((r) => {
   ownerVoiceKnown = true;
   dockStatus(`Your voice is saved (${r.samples} ${r.samples === 1 ? 'sample' : 'samples'}).`);
   if (snap) renderEnroll(snap.recording, snap.capture);
-  loadPeople();
+  loadMemory();
 });
 
-// ---------- people ----------
+// ---------- people + dock ----------
 function dockStatus(text) { $('#dock-status').hidden = !text; $('#dock-status').textContent = text; }
 
-function renderPeople(roster) {
-  const people = roster?.people || [];
+function renderPeople(list) {
+  people = list || [];
   ownerVoiceKnown = people.some((p) => p.owner && p.voiceSamples > 0);
   if (snap) renderEnroll(snap.recording, snap.capture);
-  $('#people').replaceChildren(...people.map((p) => {
+  const peopleList = $('#people');
+  if (!peopleList) return;   // the board is the memory view now; the list is optional
+  peopleList.replaceChildren(...people.map((p) => {
     const li = document.createElement('li'); li.className = 'person';
-    const h = document.createElement('h3'); h.textContent = p.owner ? p.name : p.name;
+    const h = document.createElement('h3'); h.textContent = p.name;
     const rel = document.createElement('p'); rel.className = 'relation';
     rel.textContent = p.owner ? 'You' : (p.relation || 'Someone you met');
     const core = document.createElement('p'); core.className = 'core';
@@ -122,11 +155,6 @@ function renderPeople(roster) {
     li.append(h, rel, core, stats);
     return li;
   }));
-  $('#people-empty').hidden = people.length > 0;
-}
-async function loadPeople() {
-  const r = await api.people();
-  if (r.ok) renderPeople(r.value); else if (r.code !== 'MEMORY_DOWN') dockStatus(r.error);
 }
 $('#dock-btn').addEventListener('click', async () => {
   const btn = $('#dock-btn');
@@ -136,9 +164,103 @@ $('#dock-btn').addEventListener('click', async () => {
     const r = await api.dock();
     if (!r.ok) { dockStatus(r.error); return; }
     dockStatus(dockSummary(r.value.report));
-    renderPeople(r.value);
+    renderPeople(r.value.people || []);
+    await loadMemory();
   } finally { btn.disabled = false; btn.textContent = 'Dock today'; }
 });
+
+// ---------- memory: the layers ----------
+async function loadMemory() {
+  const [m, p] = await Promise.all([api.memories(), api.people()]);
+  if (p.ok) renderPeople(p.value.people || []);
+  if (!m.ok) { $('#mem-summary').textContent = m.error || 'Memory is not running.'; return; }
+  memories = m.value.memories || [];
+  $('#mem-summary').textContent = memories.length
+    ? `${memories.length} ${memories.length === 1 ? 'fact' : 'facts'} · ${people.length} ${people.length === 1 ? 'person' : 'people'} · 4 layers`
+    : 'Nothing stored yet.';
+  drawStrata();
+}
+
+function drawStrata() {
+  const box = $('#strata');
+  box.replaceChildren();
+  $('#strata-empty').hidden = memories.length > 0;
+  if (!memories.length) return;
+
+  // One column per person: the cluster is the connection.
+  const groups = new Map();
+  for (const m of memories) {
+    const key = m.person?.id ?? '_none';
+    if (!groups.has(key)) groups.set(key, { name: m.person?.name ?? 'Unsorted', core: null, facts: [] });
+    groups.get(key).facts.push(m);
+  }
+  for (const p of people) if (groups.has(p.id) && p.core) groups.get(p.id).core = p.core;
+
+  const cols = [...groups.values()].sort((a, b) => b.facts.length - a.facts.length || a.name.localeCompare(b.name));
+  const board = document.createElement('div');
+  board.className = 'board';
+
+  const card = (tag, text, extra = '') => {
+    const b = document.createElement('div');
+    b.className = `mcard ${extra}`.trim();
+    const t = document.createElement('span'); t.className = 'tag'; t.textContent = tag;
+    const f = document.createElement('span'); f.className = 'fact'; f.textContent = text;
+    b.append(t, f);
+    return b;
+  };
+
+  for (const g of cols) {
+    const col = document.createElement('section');
+    col.className = 'mcol';
+
+    const head = document.createElement('header');
+    const who = document.createElement('span'); who.className = 'who'; who.textContent = g.name;
+    const n = document.createElement('span'); n.className = 'n';
+    n.textContent = `${g.facts.length} ${g.facts.length === 1 ? 'fact' : 'facts'}`;
+    head.append(who, n);
+    col.append(head);
+
+    // L3 — the core card, when this person has one.
+    if (g.core) col.append(card('L3 · CORE', g.core, 'core'));
+
+    for (const m of g.facts) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'mcard';
+      const tag = document.createElement('span'); tag.className = 'tag';
+      tag.textContent = `L1 · ${(m.kind || 'fact').toUpperCase()}`;
+      const fact = document.createElement('span'); fact.className = 'fact'; fact.textContent = m.text;
+      b.append(tag, fact);
+      // L0 — the words it was heard in.
+      if (m.source?.quote?.text) {
+        const q = document.createElement('span'); q.className = 'quote';
+        q.textContent = `L0 · “${m.source.quote.text}”`;
+        b.append(q);
+      }
+      b.addEventListener('click', () => selectMemory(m));
+      col.append(b);
+    }
+    board.append(col);
+  }
+  box.append(board);
+}
+
+function selectMemory(m) {
+  const box = $('#memory-detail');
+  box.replaceChildren();
+  box.hidden = false;
+  const h = document.createElement('h3'); h.textContent = m.text;
+  const quote = document.createElement('p'); quote.className = 'quote';
+  quote.textContent = m.source?.quote?.text ? `“${m.source.quote.text}”` : 'No spoken source saved.';
+  const meta = document.createElement('div'); meta.className = 'meta';
+  meta.textContent = [
+    m.person?.name ?? 'Unsorted',
+    m.kind || 'fact',
+    m.uses ? `${m.uses} ${m.uses === 1 ? 'use' : 'uses'}` : 'not used yet',
+    (m.createdAt || '').slice(0, 10),
+  ].join(' · ');
+  box.append(h, quote, meta);
+}
 
 // ---------- conversation ----------
 function addTurn(kind, text) {
@@ -168,11 +290,7 @@ function addTurn(kind, text) {
 const player = $('#player');
 let stopAt = null;
 player.addEventListener('timeupdate', () => { if (stopAt !== null && player.currentTime >= stopAt) { player.pause(); stopAt = null; } });
-function play(clip) {
-  player.src = clip.url;
-  stopAt = clip.end;
-  player.play().catch(() => {});
-}
+function play(clip) { player.src = clip.url; stopAt = clip.end; player.play().catch(() => {}); }
 
 function detailsFor(answer) {
   const wrap = document.createElement('div');
@@ -209,7 +327,7 @@ function detailsFor(answer) {
 function paintAnswer(turn, answer) {
   const body = turn.querySelector('.body');
   body.querySelector('.answer').textContent = answer.answer || 'I could not find an answer.';
-  body.parentElement.classList.remove('pending');
+  turn.classList.remove('pending');
   lastAnswer = answer.answer || '';
   const n = (answer.sources || []).length;
   const clips = (answer.clips || []).length;
@@ -231,6 +349,7 @@ function paintAnswer(turn, answer) {
 function ask(question) {
   const q = String(question || '').trim();
   if (!q) return;
+  show('chat');
   addTurn('user', q);
   const turn = addTurn('pebble', '…');
   turn.classList.add('pending');
@@ -255,9 +374,16 @@ $('#ask-form').addEventListener('submit', (event) => {
   input.value = '';
   ask(q);
 });
-for (const s of document.querySelectorAll('.suggest')) {
-  s.addEventListener('click', () => { show('chat'); ask(s.textContent); });
-}
+$('#quick-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = $('#quick-input');
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  ask(q);
+});
+for (const s of document.querySelectorAll('.suggest')) s.addEventListener('click', () => ask(s.textContent));
+
 $('#mic-btn').addEventListener('click', async () => {
   const asking = snap?.ask?.phase && snap.ask.phase !== 'idle';
   if (asking) { await api.stopAskListening(); return; }
@@ -273,3 +399,5 @@ api.onAskState((state) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { api.stopSpeaking(); player.pause(); }
 });
+
+setMode('record');
