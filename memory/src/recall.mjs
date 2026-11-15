@@ -90,7 +90,7 @@ Each step, return exactly one action as JSON:
 - {"action":"search","query":"keywords","person":"name or null",...} to load more memory from disk.
 - {"action":"open_episode","episode":"E7",...} to read the exact words of a conversation.
 - {"action":"answer","answer":"...","cite":["F3","E7"],...} when the pages are enough.
-Rules: answer in one or two short spoken sentences, mention who said it and when. Answer every part of a compound question; if one part is missing from the pages, search for it before answering. Answer in the question's language when possible. A translation is for understanding; the cited original utterance is the proof. Cite page refs you used. If memory does not contain the answer, say you don't remember that, and do not guess. Unused fields are null or [].`;
+Rules: answer in one or two short spoken sentences. Mention an event date or time only when a page explicitly states it; the current date and the date a note was saved are not event dates. If asked when an event happened and the pages do not say, state that the date is unknown. Answer every part of a compound question; if one part is missing from the pages, search for it before answering. Answer in the question's language when possible. A translation is for understanding; the cited original utterance is the proof. Cite page refs you used. If memory does not contain the answer, say you don't remember that, and do not guess. Unused fields are null or [].`;
 
 /**
  * The always-visible roster is itself a set of citeable pages (P:<person id>).
@@ -130,6 +130,52 @@ function temporalGrounded(answer, clips) {
   }));
 }
 
+const SUPPORT_STOP = new Set('a an and are as at be because by can cannot did do does eat eaten eating for from has have how i in into is it its me my no not of on or our the their there these this to under was were what when where which who with you your'.split(' '));
+const COLORS = new Set('black blue brown gold green orange pink purple red silver white yellow'.split(' '));
+const supportTerms = (text) => [...new Set((String(text).toLowerCase().match(/[a-z0-9]+/g) ?? [])
+  .filter((word) => word.length > 2 && !SUPPORT_STOP.has(word)))];
+const pageText = (page) => page.text ?? page.lines?.map((line) => line.text).join(' ') ?? '';
+function sourceScore(question, page) {
+  const text = pageText(page).toLowerCase();
+  return supportTerms(question).reduce((score, term) => score + (text.includes(term)
+    || (term === 'leave' && text.includes('left')) ? 1 : 0), 0);
+}
+const HAS_TIME = /\b(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|may|june|july|august|september|october|november|december|today|tomorrow|noon|midnight|morning|afternoon|evening|\d{1,2}:\d{2})\b/i;
+function answerWithUnknownTime(question, answer) {
+  if (!/\bwhen\b/i.test(question) || HAS_TIME.test(answer)
+    || /\b(?:unknown|not recorded|no date|no time|can't verify|cannot verify|don.t know|do not know)\b/i.test(answer)) return answer;
+  return `I don't have a recorded date or time for that. ${answer}`;
+}
+
+/** Prefer a loaded page that actually supports each answer clause over an unrelated model citation. */
+export function repairCitations(answer, question, modelCites, loadedPages) {
+  const available = new Map(loadedPages.map((page) => [page.ref, page]));
+  const valid = [...new Set(modelCites ?? [])].filter((ref) => available.has(ref));
+  if (/\b(?:couldn.t find|don.t remember|do not remember|unknown)\b/i.test(answer)) return valid;
+  const clauses = answer.split(/[.!?;]|\s+and\s+/i).map((part) => part.trim()).filter(Boolean);
+  const questionTerms = supportTerms(question);
+  const chosen = [];
+  for (const clause of clauses) {
+    const answerTerms = supportTerms(clause);
+    const exactTerms = answerTerms.filter((term) => COLORS.has(term) || /\d/.test(term));
+    const support = (page) => {
+      const spans = pageText(page).toLowerCase().split(/[.;\n]+/).filter(Boolean);
+      return spans.map((text) => {
+        if (exactTerms.some((term) => !text.includes(term))) return { score: 0, coverage: 0 };
+        const matched = answerTerms.filter((term) => text.includes(term)).length;
+        return { score: matched * 2 + questionTerms.reduce((sum, term) => sum + (text.includes(term) ? 0.5 : 0), 0),
+          coverage: answerTerms.length ? matched / answerTerms.length : 0 };
+      }).sort((a, b) => b.score - a.score)[0] ?? { score: 0, coverage: 0 };
+    };
+    const ranked = loadedPages.map((page) => ({ page, ...support(page) })).sort((a, b) => b.score - a.score);
+    const cited = ranked.find((item) => valid.includes(item.page.ref));
+    const best = ranked[0];
+    const winner = best?.score >= 2 && best.coverage >= 0.7 && (!cited || best.score > cited.score + 1) ? best : cited;
+    if (winner && !chosen.includes(winner.page.ref)) chosen.push(winner.page.ref);
+  }
+  return chosen.length ? chosen.slice(0, 4) : valid;
+}
+
 // For a cooking question, an allergy stated in the cited conversation must not be
 // replaced by an unrelated medication warning. This guards a real 4B failure on
 // the Sam/Lily fixture: the model cited Lily's peanut allergy but answered with
@@ -164,6 +210,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
   const pages = [];
   const seen = new Map(); // ref → page, everything ever loaded (for citation validation)
   const evicted = [];
+  const pinned = new Set();
   const trace = [];
   let feedback = '';
   trace.push({ step: 0, action: 'mode', mode, caps: resolved.caps, requested: resolved.requested, degraded: resolved.degraded });
@@ -178,7 +225,11 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       seen.set(it.ref, it);
       pages.push(it);
     }
-    while (renderPages(pages).length > WORKING_BUDGET && pages.length > 1) evicted.push(pages.shift().ref);
+    while (renderPages(pages).length > WORKING_BUDGET && pages.length > 1) {
+      const index = pages.findIndex((page) => !pinned.has(page.ref));
+      if (index < 0) break;
+      evicted.push(pages.splice(index, 1)[0].ref);
+    }
   };
   const loadByQuery = async (query, person = null) => {
     if (mode === 'bm25') return search(db, query, { person, limit: RETRIEVAL_K });
@@ -194,6 +245,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
     load(search(db, question, { limit: RETRIEVAL_K }));
     trace.push({ step: 0, action: 'search', query: question, loaded: pages.map((p) => p.ref) });
   }
+  pages.slice(0, 2).forEach((page) => pinned.add(page.ref));
   onStep(trace.at(-1));
 
   for (let step = 1; step <= MAX_STEPS; step++) {
@@ -236,7 +288,9 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       trace.push({ step, action: 'open_episode', episode: out.episode, found: !!ep });
     } else if (out.answer) {
       const loaded = new Set([...pages.map((p) => p.ref), ...corePages.map((p) => p.ref)]);
-      const cites = (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r)); // only pages still in context
+      const cites = repairCitations(out.answer, question, (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r)), [...pages, ...corePages]);
+      if (cites.join('|') !== (out.cite ?? []).filter((r) => loaded.has(r)).join('|'))
+        trace.push({ step, action: 'citations_repaired', from: out.cite ?? [], to: cites });
       const citedPages = cites.map((r) => seen.get(r));
       const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
       const clips = evidenceClips(db, ids.slice(0, 4));
@@ -250,7 +304,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         onStep(trace.at(-1));
         continue;
       }
-      if (!temporalGrounded(out.answer, [...clips, ...inputs.map((note) => ({ text: note.text, started_at: note.createdAt }))])) {
+      if (!temporalGrounded(out.answer, [...clips, ...citedPages.map((page) => ({ text: pageText(page), started_at: page.when }))])) {
         feedback = 'Your previous date or weekday was not supported by the cited utterances. Search for the exact event and use its spoken date; do not use the recording date.';
         trace.push({ step, action: 'answer_rejected', reason: 'unsupported date', cite: cites });
         onStep(trace.at(-1));
@@ -259,7 +313,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
       bumpUsage(db, cites);
-      const result = { answer: out.answer, cites, clips, photos, inputs, trace,
+      const result = { answer: answerWithUnknownTime(question, out.answer), cites, clips, photos, inputs, trace,
         grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
@@ -278,15 +332,31 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         user: `QUESTION: ${question}\n\nPAGES:\n${renderPages(pages)}` });
       if (out.answer?.trim()) {
         const loaded = new Set([...pages.map((p) => p.ref), ...corePages.map((p) => p.ref)]);
-        const cites = (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r));
+        const cites = repairCitations(out.answer, question, (out.cite ?? []).filter((r) => seen.has(r) && loaded.has(r)), [...pages, ...corePages]);
         const citedPages = cites.map((r) => seen.get(r));
         const ids = [...new Set(citedPages.flatMap((p) => p.evidence ?? p.lines?.map((l) => l.id) ?? []))];
         const clips = evidenceClips(db, ids.slice(0, 4));
         const photos = evidencePhotos(db, citedPages.map((p) => p.photo?.id ?? p.photoId).filter(Boolean));
         const inputs = evidenceInputs(db, cites);
+        if (!temporalGrounded(out.answer, [...clips, ...citedPages.map((page) => ({ text: pageText(page), started_at: page.when }))])) {
+          trace.push({ step: 'fallback', action: 'answer_rejected', reason: 'unsupported date', cite: cites });
+          const source = [...seen.values()].filter((page) => page.layer === 'input' || page.layer === 'fact')
+            .sort((a, b) => sourceScore(question, b) - sourceScore(question, a))[0];
+          if (source) {
+            trace.push({ step: 'fallback', action: 'reopen_source', ref: source.ref });
+            const safe = { answer: `I can't verify when that happened. The saved memory says: ${pageText(source)}`,
+              cites: [source.ref], clips: evidenceClips(db, (source.evidence ?? []).slice(0, 4)),
+              photos: [], inputs: evidenceInputs(db, [source.ref]), trace,
+              grounded: source.layer === 'input' || (source.evidence ?? []).length > 0, mode };
+            if (persistTrace) saveTrace(db, question, safe);
+            return safe;
+          }
+          throw new Error('unsupported date in fallback answer');
+        }
+        if (!cites.length) throw new Error('fallback answer has no verified source');
         trace.push({ step: 'fallback', action: 'answer', cite: cites });
         bumpUsage(db, cites);
-        const result = { answer: out.answer.trim(), cites, clips, photos, inputs, trace,
+        const result = { answer: answerWithUnknownTime(question, out.answer.trim()), cites, clips, photos, inputs, trace,
           grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
         if (persistTrace) saveTrace(db, question, result);
         return result;
