@@ -30,6 +30,8 @@ test('typed input is searchable by exact terms and Bonsai vector, then cited in 
   assert.equal(result.grounded, true);
   assert.deepEqual(result.cites, ['N1']);
   assert.equal(result.inputs[0].text, saved.text);
+  assert.deepEqual(result.sources.map((source) => source.ref), ['N1']);
+  assert.equal(result.sources[0].text, saved.text);
   db.close();
 });
 

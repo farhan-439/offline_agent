@@ -135,6 +135,10 @@ const COLORS = new Set('black blue brown gold green orange pink purple red silve
 const supportTerms = (text) => [...new Set((String(text).toLowerCase().match(/[a-z0-9]+/g) ?? [])
   .filter((word) => word.length > 2 && !SUPPORT_STOP.has(word)))];
 const pageText = (page) => page.text ?? page.lines?.map((line) => line.text).join(' ') ?? '';
+const citedSources = (pages) => pages.map((page) => ({
+  ref: page.ref, layer: page.layer, text: pageText(page), when: page.when ?? null,
+  photoId: page.photo?.id ?? page.photoId ?? null,
+}));
 function sourceScore(question, page) {
   const text = pageText(page).toLowerCase();
   return supportTerms(question).reduce((score, term) => score + (text.includes(term)
@@ -313,7 +317,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       trace.push({ step, action: 'answer', cite: cites });
       onStep(trace.at(-1));
       bumpUsage(db, cites);
-      const result = { answer: answerWithUnknownTime(question, out.answer), cites, clips, photos, inputs, trace,
+      const result = { answer: answerWithUnknownTime(question, out.answer), cites, clips, photos, inputs, sources: citedSources(citedPages), trace,
         grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
@@ -346,7 +350,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
             trace.push({ step: 'fallback', action: 'reopen_source', ref: source.ref });
             const safe = { answer: `I can't verify when that happened. The saved memory says: ${pageText(source)}`,
               cites: [source.ref], clips: evidenceClips(db, (source.evidence ?? []).slice(0, 4)),
-              photos: [], inputs: evidenceInputs(db, [source.ref]), trace,
+              photos: [], inputs: evidenceInputs(db, [source.ref]), sources: citedSources([source]), trace,
               grounded: source.layer === 'input' || (source.evidence ?? []).length > 0, mode };
             if (persistTrace) saveTrace(db, question, safe);
             return safe;
@@ -356,7 +360,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         if (!cites.length) throw new Error('fallback answer has no verified source');
         trace.push({ step: 'fallback', action: 'answer', cite: cites });
         bumpUsage(db, cites);
-        const result = { answer: answerWithUnknownTime(question, out.answer.trim()), cites, clips, photos, inputs, trace,
+        const result = { answer: answerWithUnknownTime(question, out.answer.trim()), cites, clips, photos, inputs, sources: citedSources(citedPages), trace,
           grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
         if (persistTrace) saveTrace(db, question, result);
         return result;

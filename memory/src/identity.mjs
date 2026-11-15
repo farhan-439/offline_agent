@@ -34,7 +34,12 @@ export function enrollVoice(db, personId, voiceprint) {
     return;
   }
   const old = parse(row.vector);
-  if (old.length !== v.length) return; // different embedding model; keep the old print
+  // The bundled fixtures use short synthetic vectors. A later real Argmax enrollment must
+  // replace them; otherwise enrollment reports success while live identification can never match.
+  if (old.length !== v.length) {
+    db.prepare('UPDATE voices SET vector = ?, samples = 1 WHERE person_id = ?').run(json(v), personId);
+    return;
+  }
   const n = row.samples;
   const merged = normalise(old.map((x, i) => (x * n + v[i]) / (n + 1)));
   db.prepare('UPDATE voices SET vector = ?, samples = ? WHERE person_id = ?').run(json(merged), n + 1, personId);

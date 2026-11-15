@@ -158,18 +158,50 @@ function play(clip) {
   player.play().catch((e) => { $('#answer').append(document.createTextNode(` (could not play: ${e.message})`)); });
 }
 
+function sourceCard(source, photo = null) {
+  const li = document.createElement('li'); li.className = 'source';
+  const ref = document.createElement('strong'); ref.textContent = source.ref || photo?.id || 'Memory';
+  const kind = document.createElement('span'); kind.className = 'muted';
+  kind.textContent = source.layer === 'input' ? 'Your input' : source.layer === 'photo' || photo ? 'Photo' : 'Saved memory';
+  li.append(ref, kind);
+  const content = source.text || photo?.caption;
+  if (content) { const p = document.createElement('p'); p.textContent = content; li.append(p); }
+  if (photo?.url) {
+    const img = document.createElement('img'); img.src = photo.url;
+    img.alt = photo.caption || `Saved photo ${photo.id}`; img.loading = 'lazy'; li.append(img);
+  }
+  return li;
+}
+
 $('#ask-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const q = $('#ask-input').value.trim();
   if (!q) return;
   const btn = $('#ask-btn');
   btn.disabled = true; btn.textContent = 'Thinking…';
-  $('#answer-box').hidden = false; $('#answer').textContent = 'Looking through your memory…'; $('#clips').replaceChildren();
+  $('#answer-box').hidden = false; $('#answer').textContent = 'Looking through your memory…';
+  $('#answer-evidence').textContent = ''; $('#sources').replaceChildren(); $('#clips').replaceChildren();
+  $('#sources-section').hidden = true; $('#clips-section').hidden = true;
   try {
     const r = await api.ask(q);
     if (!r.ok) { $('#answer').textContent = r.error; return; }
     lastAnswer = r.value.answer;
     $('#answer').textContent = r.value.answer;
+    const evidence = $('#answer-evidence');
+    evidence.dataset.grounded = String(!!r.value.grounded);
+    evidence.textContent = r.value.grounded ? 'Supported by saved memory' : 'No saved source verified this answer';
+    const photos = r.value.photos || [];
+    const sources = r.value.sources || [];
+    const usedPhotos = new Set();
+    const cards = sources.map((source) => {
+      const photo = photos.find((p) => p.id === source.photoId);
+      if (photo) usedPhotos.add(photo.id);
+      return sourceCard(source, photo);
+    });
+    for (const photo of photos) if (!usedPhotos.has(photo.id)) cards.push(sourceCard({}, photo));
+    $('#sources').replaceChildren(...cards);
+    $('#sources-section').hidden = cards.length === 0;
+    $('#clips-section').hidden = !r.value.clips?.length;
     $('#clips').replaceChildren(...r.value.clips.map((c) => {
       const li = document.createElement('li'); li.className = 'clip';
       const who = document.createElement('strong'); who.textContent = c.speaker || 'Someone';

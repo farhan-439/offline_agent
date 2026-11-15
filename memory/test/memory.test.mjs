@@ -355,3 +355,15 @@ test('local service enrolls the owner voice, then recognises it as the owner', a
   assert.equal((await call('/enroll-owner', { voiceprint: 'nope' })).status, 400);
   assert.equal((await call('/enroll-owner', { voiceprint: [] })).status, 400);
 });
+
+test('a real voiceprint replaces an incompatible fixture voiceprint', () => {
+  const db = openDb(':memory:');
+  const personId = enrollOwner(db, OWNER);
+  const real = Array.from({ length: 256 }, (_, i) => i === 0 ? 1 : 0);
+  enrollOwner(db, real);
+  const row = db.prepare('SELECT vector, samples FROM voices WHERE person_id = ?').get(personId);
+  assert.equal(row.samples, 1);
+  assert.equal(JSON.parse(row.vector).length, 256);
+  assert.equal(identify(db, real).person.id, personId);
+  db.close();
+});

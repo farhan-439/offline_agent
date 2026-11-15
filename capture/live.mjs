@@ -30,8 +30,10 @@ export class LiveWhisper {
   }
 
   async post(route, body) {
+    const timeoutMs = route === '/identify' ? 5000 : route === '/dock' ? 120000 : 30000;
     const res = await this.fetchImpl(`${this.memoryUrl}${route}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      timeoutMs, signal: AbortSignal.timeout(timeoutMs),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `memory ${route} failed (${res.status})`);
@@ -39,7 +41,7 @@ export class LiveWhisper {
   }
 
   async healthy() {
-    try { return (await this.fetchImpl(`${this.memoryUrl}/health`)).ok; } catch { return false; }
+    try { return (await this.fetchImpl(`${this.memoryUrl}/health`, { timeoutMs: 1500, signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
   }
 
   /** Handle one capture event. Returns the identity (or null if skipped). */

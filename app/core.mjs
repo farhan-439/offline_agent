@@ -98,9 +98,10 @@ export class KindredApp {
   async request(route, { method = 'POST', body } = {}) {
     let res;
     try {
-      res = await this.fetchImpl(`${this.memoryUrl}${route}`, method === 'GET' ? { method } : {
-        method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}),
-      });
+      const timeoutMs = route === '/dock' ? 180000 : route === '/ask' ? 90000 : 15000;
+      const options = { method, timeoutMs, signal: AbortSignal.timeout(timeoutMs) };
+      if (method !== 'GET') Object.assign(options, { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+      res = await this.fetchImpl(`${this.memoryUrl}${route}`, options);
     } catch (e) {
       if (this.memory.ok) { this.memory = { ok: false, message: MEMORY_DOWN }; this.changed(); }
       throw new MemoryDownError(e);
@@ -296,8 +297,18 @@ export class KindredApp {
     if (!q) throw new Error('Type a question first.');
     const out = await this.request('/ask', { body: { question: q } });
     const clips = (out.clips || []).map((c) => this.clip(c));
+    const photos = (out.photos || []).map((p) => this.photo(p));
+    const sources = out.sources?.length ? out.sources : (out.inputs || []).map((input) => ({
+      ref: input.id, layer: 'input', text: input.text, when: input.createdAt,
+    }));
     if (speak && out.answer) this.speak(out.answer);
-    return { question: q, answer: out.answer, grounded: !!out.grounded, clips };
+    return { question: q, answer: out.answer, grounded: !!out.grounded,
+      cites: out.cites || [], sources, photos, clips, mode: out.mode ?? null };
+  }
+
+  photo(p) {
+    return { id: p.id, caption: p.caption ?? null, takenAt: p.taken_at ?? null,
+      url: p.id ? `${this.memoryUrl}/photo/${encodeURIComponent(p.id)}` : null };
   }
 
   /** Audio paths in session files are relative to the repo root; give the renderer a playable file:// URL. */

@@ -69,6 +69,8 @@ async function fakeMemory(overrides = {}) {
     'GET /people': () => ({ people: [{ id: 'p_me', name: 'Me', relation: 'device owner', is_owner: 1, core: null, facts: 0, voice_samples: 2 },
       { id: 'p_maya', name: 'Maya', relation: 'neighbour', is_owner: 0, core: 'Maya lives next door.', facts: 3, voice_samples: 1 }], relations: [] }),
     'POST /ask': () => ({ answer: 'Dr. Patel raised lisinopril to 10 mg.', grounded: true, cites: [1],
+      sources: [{ ref: 'F1', layer: 'fact', text: 'Dr. Patel raised lisinopril to 10 mg.', when: '2026-11-14T16:02:11Z' }],
+      photos: [{ id: 'P1', caption: 'The prescription label', taken_at: '2026-11-14T16:02:11Z' }],
       clips: [{ id: 'd1#2', speaker: 'Dr. Patel', text: "Let's go to 10 mg.", audio: 'data/audio/s1.wav', start: 31.4, end: 36.1, started_at: '2026-11-14T16:02:11Z' },
         { id: 'd1#3', speaker: 'Dr. Patel', text: 'Every morning.', audio: 'data/audio/gone.wav', start: 40, end: 42 }] }),
     ...overrides,
@@ -179,6 +181,9 @@ test('ask returns the answer, speaks it, and maps clips to playable file URLs', 
   const r = await app.ask('  What did the doctor change?  ');
   assert.deepEqual(mem.calls.at(-1), { route: 'POST /ask', body: { question: 'What did the doctor change?' } });
   assert.equal(r.answer, 'Dr. Patel raised lisinopril to 10 mg.');
+  assert.deepEqual(r.cites, [1]);
+  assert.equal(r.sources[0].ref, 'F1');
+  assert.equal(r.photos[0].url, `${mem.url}/photo/P1`);
   assert.equal(r.clips.length, 2);
   const [a, b] = r.clips;
   assert.equal(a.audio, path.join(dir, 'data/audio/s1.wav'), 'relative audio path resolved from repo root');

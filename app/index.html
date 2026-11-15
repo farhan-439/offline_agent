@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' http://127.0.0.1:*; media-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'">
   <title>Kindred</title>
   <link rel="stylesheet" href="renderer.css">
 </head>
@@ -92,12 +92,19 @@
       </form>
       <div id="answer-box" class="answer-box" hidden>
         <p id="answer" class="answer" aria-live="polite"></p>
+        <p id="answer-evidence" class="answer-evidence" aria-live="polite"></p>
         <div class="answer-actions">
           <button id="say-again" type="button" class="btn">Say it again</button>
           <button id="hush" type="button" class="btn">Stop speaking</button>
         </div>
-        <h2 class="section-title">What was said</h2>
-        <ul id="clips" class="clips"></ul>
+        <section id="sources-section" hidden>
+          <h2 class="section-title">Memory sources</h2>
+          <ul id="sources" class="sources"></ul>
+        </section>
+        <section id="clips-section" hidden>
+          <h2 class="section-title">What was said</h2>
+          <ul id="clips" class="clips"></ul>
+        </section>
       </div>
       <audio id="player" preload="none"></audio>
     </section>
