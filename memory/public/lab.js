@@ -89,7 +89,14 @@ function originBadge(origin) {
   return el('span', `origin-badge ${origin === 'user' ? 'user' : 'inferred'}`, label);
 }
 
+/** Full index used to resolve citations, independent of the Ledger's current filters. */
+async function refreshMemoryIndex() {
+  const { memories } = await api('/memories?status=any&limit=300');
+  state.memories = new Map(memories.map((m) => [m.ref, m]));
+}
+
 async function refreshLedger() {
+  await refreshMemoryIndex();
   const params = new URLSearchParams();
   const q = $('ledger-search').value.trim();
   const person = $('ledger-person').value;
@@ -99,7 +106,6 @@ async function refreshLedger() {
   if (status) params.set('status', status);
   params.set('limit', '300');
   const { memories } = await api(`/memories?${params}`);
-  state.memories = new Map(memories.map((m) => [m.ref, m]));
   const list = $('ledger-list');
   list.replaceChildren();
   $('ledger-empty').hidden = memories.length > 0;
@@ -449,6 +455,8 @@ function sourceCard(source) {
     open.addEventListener('click', () => {
       setView('ledger');
       $('ledger-search').value = '';
+      $('ledger-person').value = '';
+      $('ledger-status').value = 'any';
       refreshLedger()
         .then(() => {
           const node = document.querySelector(`.ledger-card[data-ref="${source.ref}"]`);
