@@ -7,11 +7,11 @@ One hub window with three screens, a floating mark, and a small chat window open
 | **Capture** (main page) ⬅ the stone | The mark is the button. A switch above it sets what a tap does — **Record** (the room, out loud), **Ask** (type or speak a question), **Translate** (their language → English). Labels say which one is running and why the others are unavailable while the microphone is busy. On stop, the session file is sent to memory `/ingest`. |
 | **Chat** | Questions and answers from memory `/ask`. Answers are spoken (Argmax TTSKit, Mac voice fallback) and carry a **N sources** chip that expands to the cited memories and their audio. |
 | **Memory** | Four areas, all reading real endpoints — see below. Keeps **Dock today** and **My voice**. |
-| **The mark** | Always-on-top at the bottom of the screen. Tap it and it listens, then routes what you said to Record, Translate or Ask; the three choices stay available as sub-buttons. Recording adds a clay ring, translating a slate ring and a 文A badge. Whispers ("This is Dr. Patel…") appear on the card over any view. Right-click for a menu. |
+| **The mark** | The five-bar mark is the button on Capture. The always-on-top floating version is **switched off for now** (`createOrb()` / `createChat()` still exist in `main.cjs`, but nothing is drawn outside the window). |
 
 ## Capture: the three modes and the live transcript
 
-The switch is the only place that decides what the stone does, and it also reports state: `Recording · 0:14`, `Translating · 0:47`, `Saving…`. While the microphone is busy the other modes are disabled **with a line explaining why** ("Recording — tap the stone to stop"). A recording started anywhere — the floating mark, the shortcut — claims the switch until it ends.
+Three words, one control: **Record · Ask · Translate**, with the selected one lifted on a quiet track. The line under the stone reports state (`Tap to record`, `Recording · 0:14`, `Translating · 0:47`, `Saving…`). While the microphone is busy the other modes are disabled **with a line explaining why** ("Recording — tap the stone to stop"). A recording started elsewhere (the shortcut) claims the switch until it ends. There is no ring around the stone while it records — the timer and the moving bars carry that.
 
 In **Translate**, the page shows a live transcript under the stone: each heard line as `French: "…"` with its English underneath, and your own replies as `You replied` in the language Pebble spoke. States are named (`Listening`, `Translating`, `Listening to you`, `Speaking your reply`, `Saving`, `Saved`). Rows are keyed by translation `seq`, so a line that arrives twice with better text **replaces** rather than duplicates, and the last session stays on screen after **Stop** until a new session begins.
 
@@ -21,10 +21,14 @@ In **Translate**, the page shows a live transcript under the stone: each heard l
 
 | Area | Reads | Shows |
 |---|---|---|
-| **People** (top left) | `GET /people` | Name, relationship, whether the voice is known, fact count, and the person's core memory. Selecting one filters the layers. |
-| **Selected memory** (top right) | the chosen fact | Full text, person, kind, origin (declared vs extracted), date, scope, use count, the original quote, and **Play the moment** when the audio still exists. |
-| **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four selectable layers — **Inputs** (what memory was given), **Evidence** (the spoken quote behind each fact), **Facts** (extracted memories), **Core** (per-person core cards) — with search and person/type filters. |
-| **Recall activity** (bottom right) | `GET /traces` | Recent questions, the answer, retrieval mode, date, and a **verified / no source** pill with the number of citations the steps produced. Nothing is invented: an ungrounded answer says `no source`. |
+The layout is deliberately table-first, the way a CRM record works: a list you scan, a record you read, a log you audit — not cards of prose.
+
+| Area | Reads | Shows |
+|---|---|---|
+| **People** (top left) | `GET /people` | A table — name (with the core memory as a subtitle), relation, fact count, voice-known dot. Selecting a row filters the layers and opens the person in the record panel. |
+| **Selected memory** (top right) | the chosen fact | A record panel: full text, `person / kind / origin` tags, then label→value rows for saved date, scope, uses and evidence session, the original quote, and **Play the moment** when the audio still exists. |
+| **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four tabs — **Inputs**, **Evidence**, **Facts**, **Core** — as a table with `Ref · Content · Person`, colour-coded kind tags, inline search and person/type filters. |
+| **Recall activity** (bottom right) | `GET /traces` | A log — `Status · Question · Sources`. **verified** (moss) or **no source** (grey), the answer, and the citation count from the retrieval steps. An ungrounded answer says `no source`; nothing is invented. |
 
 Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
 

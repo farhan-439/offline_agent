@@ -253,6 +253,7 @@ async function loadMemory() {
     ? (failed.error || 'Memory is not running.')
     : `${memories.length} facts · ${inputs.length} inputs · ${people.length} people · ${traces.length} recalls`;
 
+  if (!selectedMemory && memories.length) selectedMemory = memories[0];
   fillFilters();
   renderPeople();
   renderLayers();
@@ -290,17 +291,19 @@ function renderPeople() {
     b.setAttribute('aria-pressed', String(selectedPerson === p.id));
     b.setAttribute('aria-label', `${p.name}, ${isOwner ? 'you' : rel(p)}, ${p.facts} facts${p.voiceSamples ? ', voice known' : ''}`);
 
-    const av = document.createElement('span'); av.className = 'avatar'; av.textContent = initials(p.name);
     const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name;
+    if (p.core) {
+      const core = document.createElement('span'); core.className = 'pcore';
+      core.textContent = p.core;
+      name.append(core);
+    }
+    const relEl = document.createElement('span'); relEl.className = 'prel'; relEl.textContent = rel(p);
+    const facts = document.createElement('span'); facts.className = 'pfacts'; facts.textContent = String(p.facts ?? 0);
     const dot = document.createElement('span'); dot.className = 'voice-dot';
     dot.dataset.known = String(!!p.voiceSamples);
     dot.title = p.voiceSamples ? 'Voice known' : 'Voice not known yet';
-    const relEl = document.createElement('span'); relEl.className = 'prel';
-    relEl.textContent = `${rel(p)} · ${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`;
-    const core = document.createElement('span'); core.className = 'pcore';
-    core.textContent = p.core || 'No core memory yet.';
 
-    b.append(av, name, dot, relEl, core);
+    b.append(name, relEl, facts, dot);
     b.addEventListener('click', () => {
       selectedPerson = selectedPerson === p.id ? null : p.id;
       $('#layer-person').value = selectedPerson || '';
@@ -313,10 +316,6 @@ function renderPeople() {
   $('#people-count').textContent = `${people.length}`;
 }
 
-function initials(name) {
-  return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('');
-}
-
 function currentRows() {
   const q = search.trim().toLowerCase();
   const pid = $('#layer-person').value;
@@ -325,12 +324,12 @@ function currentRows() {
 
   if (layer === 'inputs') {
     return inputs.filter((x) => has(x.text)).map((x) => ({
-      key: x.id, text: x.text, meta: `input ${x.id} · ${dateOnly(x.createdAt)}`, memory: null, person: null,
+      key: x.id, ref: x.id, text: x.text, kind: null, who: '—', memory: null, personId: null,
     }));
   }
   if (layer === 'core') {
     return people.filter((p) => p.core && (!pid || p.id === pid) && has(p.core)).map((p) => ({
-      key: p.id, text: p.core, meta: `${p.name} · ${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`, memory: null, person: p.id,
+      key: p.id, ref: p.id, text: p.core, kind: null, who: p.name, memory: null, personId: p.id,
     }));
   }
   // facts and evidence come from /memories
@@ -339,12 +338,17 @@ function currentRows() {
     .filter((m) => (layer === 'evidence' ? has(m.source?.quote?.text) : has(m.text)))
     .map((m) => ({
       key: m.ref,
+      ref: m.ref,
       text: layer === 'evidence' ? `“${m.source?.quote?.text || ''}”` : m.text,
-      meta: [m.person?.name || 'Unsorted', m.kind || 'fact', dateOnly(m.createdAt)].filter(Boolean).join(' · '),
+      kind: m.kind || 'fact',
+      who: m.person?.name || '—',
       memory: m,
-      person: m.person?.id || null,
+      personId: m.person?.id || null,
     }));
 }
+
+const KIND_CLASS = { health: 'health', task: 'task', place: 'place', home: 'home' };
+const kindClass = (k) => KIND_CLASS[String(k || '').toLowerCase()] || 'other';
 
 function renderLayers() {
   for (const tab of document.querySelectorAll('.ltab')) tab.setAttribute('aria-selected', String(tab.dataset.layer === layer));
@@ -363,12 +367,23 @@ function renderLayers() {
     b.type = 'button';
     b.className = 'lrow';
     b.setAttribute('aria-pressed', String(!!selectedMemory && r.memory?.ref === selectedMemory.ref));
-    const t = document.createElement('span'); t.className = 'ltext'; t.textContent = r.text;
-    const m = document.createElement('span'); m.className = 'lmeta'; m.textContent = r.meta;
-    b.append(t, m);
+
+    const ref = document.createElement('span'); ref.className = 'lref'; ref.textContent = r.ref || '—';
+    const text = document.createElement('span'); text.className = 'ltext';
+    if (r.kind) {
+      const tag = document.createElement('span');
+      tag.className = `tag ${kindClass(r.kind)}`;
+      tag.textContent = r.kind;
+      text.append(tag, document.createTextNode(` ${r.text}`));
+    } else {
+      text.textContent = r.text;
+    }
+    const who = document.createElement('span'); who.className = 'lperson'; who.textContent = r.who || '—';
+
+    b.append(ref, text, who);
     b.addEventListener('click', () => {
       if (r.memory) selectMemory(r.memory);
-      else if (r.person) { selectedPerson = r.person; $('#layer-person').value = r.person; renderPeople(); renderLayers(); }
+      else if (r.personId) { selectedPerson = r.personId; $('#layer-person').value = r.personId; renderPeople(); renderLayers(); }
     });
     li.append(b);
     list.append(li);
@@ -395,7 +410,7 @@ function renderDetail() {
       const chips = document.createElement('div'); chips.className = 'chips';
       for (const label of [(p.owner ?? !!p.is_owner) ? 'You' : relationOf(p) || 'Relation unknown',
         `${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`, p.voiceSamples ? 'voice known' : 'no voice sample']) {
-        const c = document.createElement('span'); c.className = 'chip2'; c.textContent = label; chips.append(c);
+        const c = document.createElement('span'); c.className = 'tag other'; c.textContent = label; chips.append(c);
       }
       const core = document.createElement('p'); core.className = 'q';
       core.textContent = p.core || 'No core memory card yet. Dock a conversation to build one.';
@@ -414,11 +429,13 @@ function renderDetail() {
 
   const h = document.createElement('h3'); h.textContent = m.text;
   const chips = document.createElement('div'); chips.className = 'chips';
-  for (const label of [m.person?.name || 'Unsorted', m.kind, m.origin === 'declared' ? 'you declared it' : 'extracted']) {
-    if (!label) continue;
-    const c = document.createElement('span'); c.className = 'chip2'; c.textContent = label;
-    chips.append(c);
-  }
+  const chip = (label, cls) => {
+    if (!label) return;
+    const c = document.createElement('span'); c.className = `tag ${cls}`; c.textContent = label; chips.append(c);
+  };
+  chip(m.person?.name || 'Unsorted', 'other');
+  chip(m.kind, kindClass(m.kind));
+  chip(m.origin === 'declared' ? 'declared' : 'extracted', 'other');
 
   const dl = document.createElement('dl'); dl.className = 'kv';
   const add = (k, v) => {
@@ -465,23 +482,23 @@ function renderRecall() {
   }
   list.replaceChildren(...traces.map((t) => {
     const li = document.createElement('li'); li.className = 'rrow';
-    const q = document.createElement('p'); q.className = 'rq'; q.textContent = t.question;
-    const a = document.createElement('p'); a.className = 'ra'; a.textContent = t.answer || '';
-    const meta = document.createElement('div'); meta.className = 'rmeta';
 
     const grounded = !!t.grounded;
-    const pill = document.createElement('span');
-    pill.className = `pill ${grounded ? 'ok' : 'warn'}`;
-    pill.textContent = grounded ? 'verified' : 'no source';
-    meta.append(pill);
+    const q = document.createElement('p'); q.className = 'rq'; q.textContent = t.question;
+    const a = document.createElement('p'); a.className = 'ra'; a.textContent = t.answer || '';
 
-    const n = sourceCount(t);
-    if (grounded && n) {
-      const c = document.createElement('span'); c.textContent = `${n} ${n === 1 ? 'source' : 'sources'}`;
-      meta.append(c);
-    }
-    meta.append(Object.assign(document.createElement('span'), { textContent: t.mode || 'retrieval' }));
-    if (t.created_at) meta.append(Object.assign(document.createElement('span'), { textContent: dateOnly(t.created_at) }));
+    const meta = document.createElement('div'); meta.className = 'rmeta';
+    const state = document.createElement('span');
+    state.className = `state ${grounded ? 'ok' : 'none'}`;
+    state.textContent = grounded ? 'verified' : 'no source';
+    meta.append(state);
+
+    const n = grounded ? sourceCount(t) : 0;
+    if (n) meta.append(Object.assign(document.createElement('span'), {
+      className: 'rsrc', textContent: `${n} ${n === 1 ? 'source' : 'sources'}`,
+    }));
+    const when = dateOnly(t.created_at);
+    if (when) meta.append(Object.assign(document.createElement('span'), { className: 'rsrc', textContent: when }));
 
     li.append(q, a, meta);
     return li;

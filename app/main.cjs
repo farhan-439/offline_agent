@@ -134,9 +134,10 @@ if (primary) app.whenReady().then(async () => {
     return true;
   });
   ipcMain.handle('orb:menu', () => {
+    if (!orb || orb.isDestroyed()) return false;   // no floating mark, no menu
     Menu.buildFromTemplate([
       { label: 'Open Pebble', click: () => openHub() },
-      { label: 'People', click: () => openHub('people') },
+      { label: 'Memory', click: () => openHub('memory') },
       { label: 'Chat', click: () => openHub('chat') },
       { type: 'separator' },
       { label: 'Hide pebble', click: () => orb?.hide() },
@@ -146,7 +147,9 @@ if (primary) app.whenReady().then(async () => {
   ipcMain.handle('chat:open', () => { openChat(); return true; });
   ipcMain.handle('chat:close', () => { chat?.hide(); return true; });
 
-  await Promise.all([createHub(), createOrb(), createChat()]);
+  // The floating mark is switched off for now: Pebble lives in its own window only.
+  // createOrb() / createChat() are kept for when it comes back, but nothing is placed on screen.
+  await createHub();
   globalShortcut.register('CommandOrControl+Shift+K', () => openHub('chat'));
   try {
     const [core, bridge, live] = await Promise.all([
@@ -162,7 +165,7 @@ if (primary) app.whenReady().then(async () => {
       emit: (type, payload) => {
         if (type === 'log') { console.log(`[capture] ${payload}`); return; }
         broadcast(`kindred:${type}`, payload);
-        if (type === 'whisper') openChat({ inactive: true });
+        if (type === 'whisper' && chat) openChat({ inactive: true });
       },
     });
     await kindred.start();
