@@ -70,11 +70,25 @@ Memory accepts optional `language` (BCP 47 tag such as `fr`) and `translation` t
 
 `npm run server` keeps memory loaded on `127.0.0.1:8787` (`KINDRED_PORT` overrides the port). POST JSON to `/ingest` with `{"file":"/path/to/session.jsonl"}` or `{"events":[...]}`, `/dock` with `{}`, `/ask` with `{"question":"..."}` (optional `"mode"`), and `/identify` with `{"speaker":"S1","voiceprint":[...]}`. `/identify` reads the docked card without waiting for a Bonsai generation call, keeping live recognition responsive. This service does not change the capture contract.
 
-### Input Lab
+### Memory workspace
 
-For a hands-on retrieval test, start the local Bonsai 4B server, then run `cd memory && npm run lab` and open `http://127.0.0.1:8787/`. The lab uses its own `data/input-lab.sqlite` file so experiments do not mix with captured conversations. Add text under **Input**, then ask a question in different words. Bonsai embeds the exact input when its embedding endpoint is enabled; keyword search remains available. The answer shows the exact saved inputs it cited and a search trace. The retrieval selector lets you compare keywords, Bonsai vectors, and Bonsai's selection step. All requests stay on this Mac.
+Start the local Bonsai 4B server, then `cd memory && npm run server` (captured data) or `npm run lab`
+(isolated `data/input-lab.sqlite`) and open `http://127.0.0.1:8787/`. The page has three views:
 
-The lab stores the original text as its source. It does not turn a typed input into an extracted fact first, so you can judge retrieval without extraction changing your wording. To clear the lab, stop the server and remove the gitignored `data/input-lab.sqlite` file and its SQLite sidecar files.
+- **Chat** — ask in your own words; every answer lists its sources as cards (Inputs `N`, Ledger
+  facts `F`, person cards `P`, conversation clips, photos) and a collapsible *How Bonsai searched*
+  panel built from the real `/ask` trace.
+- **Ledger** — search and filter `/memories`, see the original quote, *Added by you* versus
+  *Inferred*, and a use count that only increments when the fact shaped an answer. Correct, forget
+  and reminder actions are two-phase: the server returns the consequence first, and nothing changes
+  until you confirm.
+- **People** — `/people`: relation, core card, fact count, whether a voiceprint is enrolled.
+
+Typed **Inputs** are exact text with `N` ids; they are never silently converted into Ledger facts and
+they expose no Ledger action controls. Photos can be added with the page's file picker
+(`POST /upload-photo`); the stored original is served back through `GET /photo/:id` for thumbnails
+and source cards. All requests stay on this Mac. To clear an isolated lab, stop the server and remove
+the gitignored `data/input-lab.sqlite` file and its sidecars.
 
 | Endpoint | Returns |
 |---|---|
@@ -85,6 +99,8 @@ The lab stores the original text as its source. It does not turn a typed input i
 | `GET /traces?limit=20` | stored recall traces: plan, pages loaded, evictions, citations |
 | `GET /actions` | pending (unconfirmed) actions |
 | `POST /ingest-photo` | `{"file":"/local/path.jpg","note":"...","takenAt":"...","people":["Maya"]}` |
+| `POST /upload-photo` | raw browser upload (`Content-Type: image/*`, ≤12 MB, magic-byte sniffed, SHA-256 deduped) |
+| `GET /photo/:id` | the stored image bytes (only paths inside `data/`) |
 | `POST /ask-photo` | `{"id":"ph_...","question":"What does the sign say?"}` reopens the stored image with Bonsai vision |
 | `POST /action` | `{"kind":"set_reminder",...}` proposes; `{"id":7,"confirm":true}` applies |
 

@@ -127,9 +127,21 @@ There is **no** “forget everything” endpoint and **no** export endpoint — 
 ### `POST /ingest-photo` → photo memory
 
 `{"file":"/abs/path.jpg","note":"…","people":["Maya"]}` → `{photo, observations, caption, mode}`.
-`/ask` returns cited photos in `photos[]` (`{id,path,mime,taken_at,caption}`). **There is no image
-serving endpoint**: the UI (running locally) can read `path` from disk. That is fine offline; it is
-a gap for a browser-only build.
+`/ask` returns cited photos in `photos[]` (`{id,path,mime,taken_at,caption}`).
+
+### `POST /upload-photo` → browser upload (raw bytes)
+
+The page cannot supply a local path, so it posts the file itself: `POST /upload-photo?note=…&people=Maya,Priya`
+with `Content-Type: image/png|image/jpeg|image/webp|image/gif` and the raw bytes as the body
+(max 12 MB, configurable with `KINDRED_MAX_UPLOAD_BYTES`). The server sniffs the bytes rather than
+trusting the header, rejects anything that is not PNG/JPEG/WebP/GIF with 415 and oversize bodies
+with 413, writes a temporary file under `data/uploads/`, then runs the same pipeline as
+`/ingest-photo` (SHA-256 dedupe, Bonsai vision, FTS + vectors) and deletes the temporary file.
+
+### `GET /photo/:id` → the stored image
+
+Serves the original bytes with its stored MIME type (404 if the row or file is gone). Only paths
+inside `data/` are served. This is what the thread thumbnail and the source cards use.
 
 ## Gaps between the brief and the backend
 
@@ -147,6 +159,7 @@ a gap for a browser-only build.
 | Conversation list, auto-titles, pinning | **Not backed** — the backend stores no chat messages; the UI owns history |
 | Token streaming, stop button that keeps partial text | **Not backed** — `ask` is one response. A stop button can cancel the request, but partial text does not exist |
 | File attachments / @ references / file-grounded answers | **Not backed** (photos only) |
+| Photo picker, upload from the page, cited images as thumbnails | **Backed** (`/upload-photo`, `GET /photo/:id`) |
 | Model picker with Fast/Balanced/Thorough | **Not backed** — one model; show `bonsai-4b` |
 | Export .json / Forget everything | **Not backed** — could be client-side export of `/memories` + `/people`; forget-all needs an endpoint |
 | Offline, no network claims | **Backed** — all calls are `127.0.0.1` |
