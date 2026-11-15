@@ -3,6 +3,7 @@
 const { app, BrowserWindow, Menu, globalShortcut, ipcMain, screen, dialog } = require('electron');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const { statSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 
 const primary = app.requestSingleInstanceLock();
@@ -145,6 +146,25 @@ if (primary) app.whenReady().then(async () => {
     if (canceled || !filePaths?.length) return { cancelled: true };
     return need().addPhoto(filePaths[0]);
   }));
+  // Attach a photo or text file to a question. The picker is native; the file never leaves this Mac.
+  ipcMain.handle('files:pick', safe(async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(hub, {
+      title: 'Attach a photo or text file',
+      buttonLabel: 'Attach',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Photos and text', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'txt', 'md', 'csv', 'json', 'log'] },
+        { name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic'] },
+        { name: 'Text', extensions: ['txt', 'md', 'csv', 'json', 'log'] },
+      ],
+    });
+    if (canceled || !filePaths?.length) return { cancelled: true };
+    const file = filePaths[0];
+    let size = 0;
+    try { size = statSync(file).size; } catch { /* size is only a hint */ }
+    return { path: file, name: path.basename(file), size };
+  }));
+  ipcMain.handle('ask:file', safe((question, file) => need().askWithFile(question, file)));
   ipcMain.handle('memory:dock', safe(() => need().dock()));
   ipcMain.handle('memory:ask', safe((q) => need().ask(q)));
   ipcMain.handle('ask:listen-start', safe(() => need().startAskListening()));

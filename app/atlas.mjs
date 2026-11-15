@@ -407,7 +407,10 @@ function timeline(d, lit, size) {
   }
   for (const [f, q, roomy] of placed) {
     const [label, glyph, col] = kindOf(f.kind);
-    const lang = roomy ? f.evidence.map((id) => utt.get(id)).find((u) => u?.translation && u.language && u.language !== 'en')?.language : null;
+    const tagged = roomy ? f.evidence.map((id) => utt.get(id)).find((u) => u?.translation && u.language && u.language !== 'en')?.language : null;
+    // The tag is drawn outside the chip's edge, so it only fits when no neighbouring chip
+    // on the same day would sit under it (crowded days keep the map readable).
+    const lang = tagged && !placed.some(([, o]) => o !== q && Math.hypot(o.x - q.x, o.y - q.y) < q.r + o.r + 7) ? tagged : null;
     const g = s('g', { class: `tl-fact${lit && !on(f.ref) ? ' dim' : ''}${state.selected === f.ref ? ' picked' : ''}`, tabindex: '0', role: 'button', 'aria-label': `${label}: ${f.text}`,
       onclick: (e) => { e.stopPropagation(); select(f.ref); }, onkeydown: (e) => { if (e.key === 'Enter') select(f.ref); } },
     s('title', {}, `${label} · heard ${fmtDate(f.observedAt)}\n${f.text}`),

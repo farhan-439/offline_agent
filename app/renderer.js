@@ -3,6 +3,7 @@ import { recordButtonState, enrollButtonState, dockSummary, formatClipTime, lang
 import { markSVG, mountMark } from './mark.mjs';
 import { mountActions } from './actions.mjs';
 import { isRunPhrase } from './voice-run.mjs';
+import { renderAtlas } from './atlas.mjs';
 
 const api = window.kindred;
 const $ = (s) => document.querySelector(s);
@@ -27,6 +28,7 @@ let memories = [];
 let inputs = [];
 let traces = [];
 let layers = null;
+let memView = 'map';           // 'map' (atlas.mjs) | 'shelf' — two readings of the same store
 let selectedMemory = null;
 let layer = 'facts';
 let search = '';
@@ -39,14 +41,15 @@ let liveState = 'idle';
 // ---------- navigation ----------
 function show(view) {
   if (view === 'chat' || view === 'ask') { setMode('ask'); view = 'capture'; }
-  if (!['capture', 'memory'].includes(view)) view = 'capture';
+  if (!['capture', 'memory', 'actions'].includes(view)) view = 'capture';
   app.dataset.view = view;
   for (const nav of document.querySelectorAll('.nav')) {
     const on = nav.dataset.view === view;
     if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
   }
-  for (const v of ['capture', 'memory']) $(`#view-${v}`).hidden = v !== view;
+  for (const v of ['capture', 'memory', 'actions']) $(`#view-${v}`).hidden = v !== view;
   if (view === 'memory') loadMemory();
+  if (view === 'actions') void actions.load();
   if (view === 'capture' && mode === 'ask') $('#ask-input').focus();
 }
 for (const nav of document.querySelectorAll('.nav')) nav.addEventListener('click', () => show(nav.dataset.view));
@@ -369,6 +372,7 @@ async function loadMemory() {
   if (selectedInput && !inputs.some((x) => x.id === selectedInput.id)) selectedInput = null;
   if (selectedTrace && !traces.some((x) => x.id === selectedTrace.id)) selectedTrace = null;
   renderMem();
+  renderMemoryLayout();
 }
 
 // One photo, saved to memory: Bonsai vision writes observations and the photo becomes
@@ -393,6 +397,32 @@ $('#say-run')?.addEventListener('click', async () => {
   const r = await api.startIntentListening();
   if (!r.ok && status) status.textContent = r.error || 'Could not open the microphone.';
 });
+
+// The Memory page has two readings of the same store. The map (atlas.mjs) is the whole
+// picture: the pipeline, every person over time, what a fact traces back to, what has been
+// used, what is coming up. The shelf is the detail: the fact browser, recall, questions.
+function renderMemoryLayout() {
+  const map = $('#mem-map'), shelf = $('#mem-shelf');
+  if (!map || !shelf) return;
+  const onMap = memView === 'map';
+  map.hidden = !onMap;
+  shelf.hidden = onMap;
+  for (const [sel, on] of [['#mem-map-btn', onMap], ['#mem-shelf-btn', !onMap]]) {
+    const b = $(sel);
+    if (!b) continue;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+  }
+  if (onMap) renderAtlas(map, { layers, memories, offline: memOffline }, { play });
+}
+
+for (const [sel, view] of [['#mem-map-btn', 'map'], ['#mem-shelf-btn', 'shelf']]) {
+  $(sel)?.addEventListener('click', () => {
+    if (memView === view) return;
+    memView = view;
+    renderMemoryLayout();
+  });
+}
 
 function renderMem() {
   renderField();
@@ -918,7 +948,7 @@ function renderActivity() {
 $('#field-search').addEventListener('input', (e) => { memSearch = e.target.value; renderField(); });
 
 // ---------- conversation ----------
-function addTurn(kind, text) {
+function addTurn(kind, text, fileName = null) {
   empty.hidden = true;
   const turn = document.createElement('div');
   turn.className = `turn ${kind}`;
@@ -935,6 +965,12 @@ function addTurn(kind, text) {
   } else {
     const p = document.createElement('p');
     p.textContent = text;
+    if (fileName) {
+      const chip = document.createElement('span');
+      chip.className = 'turn-file';
+      chip.textContent = `📎 ${fileName}`;
+      turn.append(chip);
+    }
     turn.append(p);
   }
   thread.append(turn);
@@ -1033,11 +1069,66 @@ $('#ask-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const input = $('#ask-input');
   const q = input.value.trim();
-  if (!q) return;
+  if (!q && !attachedFile) return;
   input.value = '';
+  if (attachedFile) {
+    const file = attachedFile;
+    attachedFile = null;
+    paintAttachment();
+    askWithAttachment(q, file);
+    return;
+  }
   ask(q);
 });
 for (const s of document.querySelectorAll('.suggest')) s.addEventListener('click', () => ask(s.textContent));
+
+// ---------- attaching a photo or text file to a question ----------
+let attachedFile = null;
+
+function paintAttachment() {
+  const chip = $('#ask-file');
+  const btn = $('#ask-attach');
+  if (!chip || !btn) return;
+  chip.hidden = !attachedFile;
+  btn.dataset.attached = String(Boolean(attachedFile));
+  if (!attachedFile) { chip.replaceChildren(); return; }
+  const name = document.createElement('span');
+  name.textContent = attachedFile.name;
+  name.title = attachedFile.path;
+  const off = document.createElement('button');
+  off.type = 'button';
+  off.textContent = '×';
+  off.setAttribute('aria-label', 'Remove attachment');
+  off.addEventListener('click', () => { attachedFile = null; paintAttachment(); $('#ask-input').focus(); });
+  chip.replaceChildren(name, off);
+}
+
+$('#ask-attach')?.addEventListener('click', async () => {
+  const r = await api.pickFile();
+  if (!r.ok) { result(r.error); return; }
+  if (r.value?.cancelled) return;
+  attachedFile = r.value;
+  paintAttachment();
+  $('#ask-input').focus();
+});
+
+function askWithAttachment(question, file) {
+  const q = String(question || '').trim() || 'What does this say? Translate it to English.';
+  setMode('ask');
+  show('capture');
+  addTurn('user', q, file.name);
+  const turn = addTurn('pebble', '…');
+  turn.classList.add('pending');
+  pendingTurn = turn;
+  api.askWithFile(q, file.path).then((r) => {
+    if (!r.ok) {
+      turn.querySelector('.answer').textContent = r.error;
+      turn.classList.remove('pending');
+      pendingTurn = null;
+    }
+  });
+  thread.scrollTop = thread.scrollHeight;
+}
 
 function renderAskState(state = {}) {
   const heard = $('#ask-heard');

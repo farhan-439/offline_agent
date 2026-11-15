@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('kindred', {
   dock: () => ipcRenderer.invoke('memory:dock'),
   addPhoto: () => ipcRenderer.invoke('photos:add'),
   ask: (question) => ipcRenderer.invoke('memory:ask', question),
+  pickFile: () => ipcRenderer.invoke('files:pick'),
+  askWithFile: (question, file) => ipcRenderer.invoke('ask:file', question, file),
   startAskListening: () => ipcRenderer.invoke('ask:listen-start'),
   stopAskListening: () => ipcRenderer.invoke('ask:listen-stop'),
   startIntentListening: () => ipcRenderer.invoke('intent:listen-start'),

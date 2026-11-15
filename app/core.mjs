@@ -539,6 +539,36 @@ export class KindredApp {
     return data;
   }
 
+  /**
+   * Ask about one attached file, answered by Bonsai.
+   * A photo is saved to memory as evidence first (so the answer can cite it, and you can find
+   * it again); a text file is handed to the normal ask path as context. Nothing leaves the Mac.
+   */
+  async askWithFile(question, file) {
+    const q = String(question ?? '').trim() || 'What does this say? Translate it to English.';
+    const ext = path.extname(String(file || '')).toLowerCase();
+    const IMAGE = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic'];
+    if (IMAGE.includes(ext)) {
+      const up = await this.addPhoto(file);
+      const out = await this.request('/ask-photo', { body: { id: up.photo?.id, question: q } });
+      const answer = {
+        question: q, answer: out.answer, grounded: !!out.grounded, cites: out.cites ?? [],
+        sources: (up.observations ?? []).map((o) => ({ ref: up.photo?.id ?? 'photo', layer: 'photo', text: o.text })),
+        photos: (out.photos ?? []).map((p) => this.photo(p)), clips: [], mode: out.mode ?? 'vision',
+      };
+      this.emit('ask-answer', answer);
+      if (out.answer) this.speak(out.answer);
+      return answer;
+    }
+    if (['.txt', '.md', '.csv', '.json', '.log'].includes(ext)) {
+      const text = readFileSync(file, 'utf8').slice(0, 8000);
+      const answer = await this.answerQuestion(`${q}\n\nAttached file “${path.basename(file)}”:\n${text}`);
+      answer.question = q;
+      return answer;
+    }
+    throw new Error('Pebble can attach photos and text files. PDFs are not supported yet.');
+  }
+
   /** Bonsai drafts useful follow-through; nothing leaves Pebble until a person confirms. */
   async actionSuggestions() {
     const r = await this.request('/action-suggestions', { method: 'GET' });

@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="mark.css">
   <link rel="stylesheet" href="renderer.css">
   <link rel="stylesheet" href="actions.css">
+  <link rel="stylesheet" href="atlas.css">
 </head>
 <body>
 <div id="app" class="app" data-view="capture" data-phase="idle" data-mode="record">
@@ -30,6 +31,10 @@
       <button class="nav" type="button" data-view="memory" aria-label="Memory">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="M3 12.5 12 17l9-4.5M3 17.5 12 22l9-4.5"/></svg>
         <span class="nav-label">Memory</span>
+      </button>
+      <button class="nav" type="button" data-view="actions" aria-label="Actions">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.5 9 17 19.5 6.5"/><path d="M4.5 5.5h6M4.5 19h6"/></svg>
+        <span class="nav-label">Actions</span>
       </button>
     </nav>
 
@@ -88,7 +93,11 @@
               </div>
             </div>
           </div>
-          <form id="ask-form" class="composer" autocomplete="off">
+          <form id="ask-form" class="composer has-file" autocomplete="off">
+            <button id="ask-attach" class="mic" type="button" aria-label="Attach a photo or text file" title="Attach a photo or text file">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 12.5V7a3 3 0 0 1 6 0v8.5a4.5 4.5 0 0 1-9 0V8"/></svg>
+            </button>
+            <span id="ask-file" class="ask-file" hidden></span>
             <label class="sr-only" for="ask-input">Your question</label>
             <input id="ask-input" maxlength="500" placeholder="Or type a question…" spellcheck="true">
             <button id="ask-send" type="submit" aria-label="Send">↑</button>
@@ -104,6 +113,10 @@
             <p id="mem-summary" class="fine">Reading what Pebble keeps…</p>
           </div>
           <div class="row">
+            <div class="mem-switch" role="tablist" aria-label="How to read memory">
+              <button id="mem-map-btn" class="seg on" type="button" role="tab" aria-selected="true">Map</button>
+              <button id="mem-shelf-btn" class="seg" type="button" role="tab" aria-selected="false">Shelf</button>
+            </div>
             <button id="photo-btn" type="button" class="quiet" title="Add a photo from this Mac to memory">Add photo</button>
             <button id="dock-btn" type="button" class="quiet">Dock today</button>
             <button id="enroll-btn" type="button" class="quiet">My voice</button>
@@ -111,24 +124,12 @@
         </div>
         <p id="dock-status" class="fine" hidden></p>
 
-        <div class="mem-grid">
-          <section id="actions-board" class="panel actions-panel" aria-labelledby="p-actions">
-            <header class="panel-head">
-              <h2 id="p-actions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.5 9 17l10.5-10"/></svg>Actions</h2>
-              <span id="actions-count" class="count"></span>
-            </header>
-            <div class="actions-tools">
-              <button id="say-run" class="act" type="button" title="Listen once for “run”">Say “run”</button>
-              <button id="scan-actions" class="act" type="button">Compile</button>
-              <button id="run-actions" class="act" type="button" disabled>Run (0)</button>
-            </div>
-            <p id="actions-status" class="fine actions-status" role="status"></p>
-            <div id="run-review" class="run-review" hidden></div>
-            <div class="actions-layout">
-              <div id="action-list" class="action-list" aria-label="Proposed actions"></div>
-              <div id="action-detail" class="action-detail" aria-live="polite"></div>
-            </div>
-          </section>
+        <!-- Two readings of the same memory: the map is the whole picture (pipeline, people
+             over time, trace, recall, what is coming up); the shelf is the detail underneath. -->
+        <div id="mem-map" class="atlas"></div>
+
+        <div id="mem-shelf" class="mem-shelf" hidden>
+          <div class="mem-grid">
           <section class="panel field-panel" aria-labelledby="p-field">
             <header class="panel-head">
               <h2 id="p-field"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg>What Pebble keeps</h2>
@@ -187,7 +188,29 @@
             </header>
             <div id="activity" class="activity"></div>
           </section>
+          </div>
         </div>
+      </section>
+
+      <!-- ===== Actions: what memory suggests doing next ===== -->
+      <section id="view-actions" class="view page actions-view" aria-label="Actions" hidden>
+        <section id="actions-board" class="panel actions-panel" aria-labelledby="p-actions">
+          <header class="panel-head">
+            <h2 id="p-actions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.5 9 17l10.5-10"/></svg>Actions</h2>
+            <span id="actions-count" class="count"></span>
+          </header>
+          <div class="actions-tools">
+            <button id="say-run" class="act" type="button" title="Listen once for “run”">Say “run”</button>
+            <button id="scan-actions" class="act" type="button">Compile</button>
+            <button id="run-actions" class="act" type="button" disabled>Run (0)</button>
+          </div>
+          <p id="actions-status" class="fine actions-status" role="status"></p>
+          <div id="run-review" class="run-review" hidden></div>
+          <div class="actions-layout">
+            <div id="action-list" class="action-list" aria-label="Proposed actions"></div>
+            <div id="action-detail" class="action-detail" aria-live="polite"></div>
+          </div>
+        </section>
       </section>
 
     </main>

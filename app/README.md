@@ -1,11 +1,12 @@
 # app/ — Pebble desktop app (Electron)
 
-One hub window with Capture and Memory screens. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
+One hub window with Capture, Memory, and Actions screens. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
 
 | Screen | What it does |
 |---|---|
 | **Capture** (main page) ⬅ the stone | The mark switches between **Record**, **Translate**, and **Ask**. Translate shows the live transcript and reply controls; Ask shows the recognized question, answer, and sources below the stone. On stop, a Record or Translate session is sent to memory `/ingest`. |
-| **Memory** | An Actions board in place of the graph. Bonsai proposes Calendar events, Reminders, Notes, and birthday updates from saved facts. Every proposal shows its source and needs a separate Add confirmation. Keeps **Dock today** and **My voice**. |
+| **Memory** | Two readings of the same store, switched in the header: **Map** (default, `atlas.mjs`) and **Shelf**. The map is the whole picture — the pipeline (heard → filtered → summarized → facts → people), every person over time with their facts, a trace from any fact back to the words and episode it came from, recall, what is coming up, and translations. The shelf is the detail — the fact browser, recall ring, questions with sources, what is on disk, the last two weeks. Both keep **Dock today**, **Add photo**, and **My voice**. |
+| **Actions** | Bonsai proposes Calendar events, Reminders, Notes, and birthday updates from saved facts. Every proposal shows its source and needs a separate Add confirmation. |
 | **The mark** | The five-bar mark is the button on Capture. The always-on-top floating version is **switched off for now** (`createOrb()` / `createChat()` still exist in `main.cjs`, but nothing is drawn outside the window). |
 
 ## Capture: Record, Translate, and the live transcript
@@ -16,11 +17,11 @@ In **Translate**, the page shows a live transcript under the stone: each heard l
 
 **Record** shows only the real recording state. It does not invent a transcript, because capture does not stream text for ordinary recordings.
 
-## Memory: actions from recordings
+## Actions: from recordings to reviewed drafts
 
 **Dock today** extracts evidence-linked facts from recordings and starts an Actions scan. **Compile actions** scans all unexamined saved facts in batches of eight, with a Stop control between batches. Bonsai returns grammar-locked drafts; the app derives dates and clock times only from saved evidence. An ambiguous time such as “at ten” is left blank for review. A medication frequency never becomes invented clock times or a duration.
 
-The board lists proposed and added actions on the left. Selecting one shows the saved fact, original words, and a playable clip when audio exists. Edit the details, choose **Review before adding**, then **Queue for Run**. Pebble validates the required details before queueing. **Run reviewed** shows every queued item and destination together; only the final **Run actions** click writes to Mac apps. Results appear on the board, and added items have an **Open Calendar / Reminders / Notes / Contacts** button. The exported item includes the source fact, original words, and local clip path in its notes. A failed export needs fresh review; if tracking fails after a successful export, the draft stays locked to prevent duplicates.
+The Actions screen lists proposed and added actions on the left. Selecting one shows the saved fact, original words, and a playable clip when audio exists. Edit the details, choose **Review before adding**, then **Queue for Run**. Pebble validates the required details before queueing. **Run reviewed** shows every queued item and destination together; only the final **Run actions** click writes to Mac apps. Results appear on the board, and added items have an **Open Calendar / Reminders / Notes / Contacts** button. The exported item includes the source fact, original words, and local clip path in its notes. A failed export needs fresh review; if tracking fails after a successful export, the draft stays locked to prevent duplicates.
 
 Calendar and Reminders use EventKit. The first Add may trigger macOS permission. Both choose an **On My Mac** local calendar/list and show a setup error if one is unavailable. Notes uses the **On My Mac** account. Contacts requires one exact matching name and an actual birth year entered by the user. Contact account sync depends on where that existing card lives.
 
