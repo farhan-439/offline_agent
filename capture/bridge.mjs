@@ -128,6 +128,22 @@ export class CaptureBridge {
 
   cancelRecording() { if (this.recordingId) this.send({ cmd: 'record-cancel' }); }
 
+  // Two-way translation: during a `translate` recording, cut the owner's spoken reply out of the
+  // live mic. Live translation ignores the mic meanwhile (and while `speak` plays).
+  replyStart() { return this.request({ cmd: 'reply-start' }).promise; }
+  /** Resolves {text, seconds}: the owner's English, transcribed on its own. */
+  replyStop() { return this.request({ cmd: 'reply-stop' }).promise; }
+  replyCancel() { return this.request({ cmd: 'reply-cancel' }).promise; }
+  /** Speak in one of Argmax TTS's languages (two-way replies). Resolves when the line has been spoken. */
+  async speakIn(text, language) {
+    const line = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (!line) return false;
+    this.stopSpeaking();
+    const { id, promise } = this.request({ cmd: 'speak', text: line, language });
+    this.speakingId = id;
+    try { return await promise; } finally { if (this.speakingId === id) this.speakingId = null; }
+  }
+
   /** Transcribe + diarize an existing WAV into contract JSONL. `translate`: add `language` + English `translation`. */
   async processFile(audio, { session, place, translate } = {}) {
     await this.whenReady();

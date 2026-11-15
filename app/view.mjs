@@ -87,3 +87,29 @@ export function elapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+import { replyLanguage } from './translate.mjs';
+
+/** Two-way: the Reply button in the Live translation card. hidden outside Live translation. */
+export function replyButtonState(rec = {}) {
+  if (rec.mode !== 'translate' || rec.phase !== 'recording') return { hidden: true };
+  const reply = rec.reply || { phase: 'idle' };
+  const target = reply.language || [...(rec.translations || [])].reverse().map((t) => replyLanguage(t.language)).find(Boolean) || null;
+  const lang = target ? languageName(target) : null;
+  switch (reply.phase) {
+    case 'listening': return { label: `■ Done, say it in ${lang}`, hint: 'Speak your reply in English, then press Done.', listening: true, disabled: false };
+    case 'transcribing': return { label: 'Writing down your reply…', hint: '', disabled: true };
+    case 'translating': return { label: `Translating into ${lang}…`, hint: 'Bonsai is translating, on this Mac.', disabled: true };
+    case 'speaking': return { label: `Saying it in ${lang}…`, hint: '', disabled: true };
+  }
+  if (!target) return { label: '🎙 Reply', hint: reply.error || 'Reply works once Kindred hears German, Chinese, Spanish or French.', disabled: true };
+  return { label: `🎙 Reply in ${lang}`, hint: reply.error || `Say it in English. Kindred says it in ${lang}, out loud.`, disabled: false, language: target };
+}
+
+/** Live translation card: what they said and what you replied, newest first. */
+export function conversationLines(rec = {}, n = 4) {
+  const theirs = (rec.translations || []).map((t) => ({ kind: 'heard', ...t }));
+  const yours = (rec.replies || []).map((r) => ({ kind: 'reply', ...r }));
+  // Same timestamp: a reply always answers what was heard, so it goes on top.
+  return [...theirs, ...yours].sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || (a.kind === 'reply' ? -1 : b.kind === 'reply' ? 1 : 0)).slice(0, n);
+}

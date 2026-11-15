@@ -19,7 +19,7 @@ npm test                                         # bridge + live-loop tests (fak
 |---|---|
 | `kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR] [--translate]` | WhisperKit (word timestamps) + SpeakerKit diarization → contract JSONL. Non-speech tags (`[BLANK_AUDIO]`, `(music)`) are stripped. |
 | `kindred-capture record [--place TEXT] [--out DIR] [--audio-dir DIR] [--seconds N]` | Mic → 16 kHz WAV in `data/audio/<session>.wav` until Enter (or N s), then `process`. Falls back to the built-in mic if AirPods/Bluetooth send only silence. |
-| `kindred-capture speak "<text>"` | TTSKit Qwen3-TTS, voice `ryan` (`KINDRED_VOICE=aiden` for the other native-English voice). |
+| `kindred-capture speak "<text>" [--language fr] [--voice NAME] [--out file.wav]` | Argmax TTSKit (Qwen3-TTS 0.6B). English voice `ryan` (`KINDRED_VOICE=aiden` for the other). `--language` takes any of Qwen3-TTS's 10: en, es, fr, de, it, pt, ru, zh, ja, ko; zh/ja/ko use the native voices vivian / ono-anna / sohee, the rest use the English voice. `--out` writes a 24 kHz WAV instead of playing. `serve`'s `speak` command takes the same `language`, plus `saveTo` and `play:false`. |
 | `kindred-capture serve [--out DIR] [--audio-dir DIR] [--no-tts 1] [--no-translate 1]` | Long-lived JSON-lines server: models load **once**. Protocol in `Sources/KindredCapture/Server.swift`. |
 | `kindred-capture provision [--only whisper-multi]` | Run once with Wi-Fi on. Downloads all models into `~/Library/Caches/Kindred/hub` and links the folders below. |
 | `kindred-capture license` | Argmax Pro license status as JSON (never prints the key). |
@@ -154,3 +154,19 @@ Task list: see "Partner" in the root README §5.
 - Translation on a real mic with real people, background noise and accents (only `say` voices so far).
 
 Validate output against the fixtures: `cd ../memory && npm run kindred -- ingest <your.jsonl> && npm run kindred -- dock`.
+
+## Speaking other languages: measured 11/15
+
+This was a feasibility test for two-way translation. 10 everyday English sentences (directions, an appointment, a dose, an allergy) were translated by Bonsai 4B into each of the 9 languages. Argmax TTSKit spoke each one (`play:false`, `saveTo`), then multilingual Whisper (`process --translate`) heard the audio and translated it back to English.
+- **Language detection on Argmax's own speech:** 10/10 for es, de, pt, zh, ja, ko and ru; 9/10 for it; 8/10 for fr. Two French clips came out unintelligible with the English `ryan` voice.
+- **Speed:** generation took about 1.0–1.25× the audio length. When playing, the first sound arrives in about 0.7 s.
+- **Meaning survived the whole chain:** best in de (9/10) and zh (about 7/10); es and fr about 6/10 plus partial matches. It, pt, ja, ko and ru were weaker. The errors that matter most were allergens (peanuts → nuts or almonds), days (Thursday → Wednesday) and drug names. Some of these misses come from the back-translation step itself, not what a listener would hear.
+
+## Two-way replies
+
+During a `translate` recording:
+- `{"cmd":"reply-start"}` → `{"replying":true}`, then `{"cmd":"reply-stop"}` → `{"text":"<English>","seconds":2.4,"transcribeMs":149}`; `reply-cancel` drops it.
+- The reply is cut from the live mic buffer (no second recording) and transcribed with English Whisper.
+- While a reply is being recorded, and while `speak` plays (+0.6 s echo tail), `LiveTranslator` skips chunks that are at least 40% inside those windows (`Muter` in `Translate.swift`). This keeps the owner's English and Kindred's own spoken French out of the live translations.
+- **Verified 11/15 on a simulated French–English–French conversation:** both French lines were translated, the English reply was muted live and transcribed exactly in 0.15 s, and a French line captured during a reply was muted.
+- Bridge: `replyStart()`, `replyStop()`, `replyCancel()`, `speakIn(text, language)`.

@@ -1,4 +1,4 @@
-import { orbMenuState, voiceLabel, languageName, elapsed } from './view.mjs';
+import { orbMenuState, voiceLabel, languageName, elapsed, replyButtonState, conversationLines } from './view.mjs';
 
 const api = window.kindred;
 const $ = (s) => document.querySelector(s);
@@ -63,10 +63,26 @@ function renderLive(menu) {
   $('#live-stop').disabled = m.disabled;
 
   const list = $('#live-list');
+  const rb = replyButtonState(rec);
+  $('#reply-btn').hidden = !!rb.hidden;
+  $('#reply-hint').hidden = !!rb.hidden || !rb.hint;
+  if (!rb.hidden) {
+    $('#reply-btn').textContent = rb.label;
+    $('#reply-btn').disabled = rb.disabled;
+    $('#reply-btn').dataset.listening = String(!!rb.listening);
+    $('#reply-hint').textContent = rb.hint || '';
+  }
   if (translating) {
-    const lines = [...(rec.translations || [])].reverse().slice(0, 4);
+    const lines = conversationLines(rec, 3);
     list.replaceChildren(...lines.map((t) => {
       const li = document.createElement('li');
+      if (t.kind === 'reply') {
+        li.className = 'reply-line';
+        const you = document.createElement('p'); you.className = 'you'; you.textContent = `You: “${t.english}”`;
+        const theirs = document.createElement('p'); theirs.className = 'theirs'; theirs.textContent = `${t.translated}  (${languageName(t.language)})`;
+        li.append(you, theirs);
+        return li;
+      }
       const original = document.createElement('p'); original.className = 'original';
       original.textContent = `${languageName(t.language)}: “${t.text}”`;
       const english = document.createElement('p'); english.className = 'english';
@@ -199,6 +215,11 @@ async function start(opts) {
 $('#choice-record').addEventListener('click', () => start({}));
 $('#choice-translate').addEventListener('click', () => start({ mode: 'translate' }));
 $('#choice-ask').addEventListener('click', openAsk);
+$('#reply-btn').addEventListener('click', async () => {
+  const listening = snap?.recording?.reply?.phase === 'listening';
+  const r = listening ? await api.stopReply() : await api.startReply();
+  if (!r.ok) showNotice('Reply', r.error, 8000);
+});
 $('#live-stop').addEventListener('click', async () => {
   $('#live-stop').disabled = true;
   const r = await api.stopRecording();

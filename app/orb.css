@@ -91,6 +91,15 @@ button:disabled { cursor: default; }
 .stop { display: block; width: 100%; min-height: 52px; margin-top: 12px; border-radius: 14px; background: #2b2924; color: #fff; font-size: 18px; font-weight: 700; }
 .stop:disabled { opacity: .55; }
 
+/* two-way reply */
+.reply { display: block; width: 100%; min-height: 56px; margin-top: 12px; border-radius: 14px; background: var(--cyan); color: #fff; font-size: 19px; font-weight: 700; }
+.reply:disabled { opacity: .5; }
+.reply[data-listening="true"] { background: var(--violet); animation: blink 1.6s ease-in-out infinite; }
+.reply-hint { margin: 6px 2px 0; font-size: 14px; color: var(--muted); }
+.live-list li.reply-line { background: #eef4fb; }
+.live-list .you { margin: 0; font-size: 14px; color: var(--muted); }
+.live-list .theirs { margin: 2px 0 0; font-size: 20px; font-weight: 650; color: #155f78; line-height: 1.35; }
+
 /* ask */
 .card-text { margin: 0; font-size: 24px; line-height: 1.35; font-weight: 600; }
 .ask-status { min-height: 22px; margin: 8px 0 10px; font-size: 14px; color: var(--muted); }
