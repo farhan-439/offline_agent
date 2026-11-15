@@ -257,8 +257,7 @@ async function loadMemory() {
   fillFilters();
   renderPeople();
   renderLayers();
-  renderRecall();
-  renderDetail();
+  drawMap();
 }
 
 const relationOf = (p) => (p.relation && p.relation !== 'device owner' ? p.relation : null)
@@ -393,119 +392,174 @@ function renderLayers() {
 
 function selectMemory(m) {
   selectedMemory = m;
+  mapMode = 'fact';
   renderLayers();
-  renderDetail();
+  drawMap();
 }
 
-function renderDetail() {
-  const box = $('#memory-detail');
-  box.replaceChildren();
+let mapMode = 'fact';
+let traceIndex = 0;
+
+function clearMap() {
+  const host = $('#map-canvas');
+  host.replaceChildren();
+  $('#map-foot').replaceChildren();
+  return host;
+}
+
+function mapEmpty(host, text) {
+  const p = document.createElement('p');
+  p.className = 'map-empty';
+  p.textContent = text;
+  host.append(p);
+}
+
+/** Absolute-positioned label inside the canvas; percentages so it scales with the panel. */
+function mapNode(host, cls, x, y, text) {
+  const el = document.createElement('div');
+  el.className = `mnode ${cls}`;
+  el.style.left = `${x}%`;
+  el.style.top = `${y}%`;
+  if (text != null) el.textContent = text;
+  host.append(el);
+  return el;
+}
+
+/** The SVG line layer: 0–100 in both axes, stretched, strokes kept 1px. */
+function mapLines(host) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'map-lines');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  host.append(svg);
+  return (x1, y1, x2, y2, soft = false) => {
+    const path = document.createElementNS(NS, 'path');
+    const bend = Math.min(14, Math.max(4, Math.abs(y2 - y1) / 3));
+    path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`);
+    if (soft) path.setAttribute('class', 'soft');
+    svg.append(path);
+  };
+}
+
+function footSpacer() {
+  const s = document.createElement('span');
+  s.className = 'grow';
+  return s;
+}
+
+function drawMap() {
+  for (const tab of document.querySelectorAll('.mtab')) tab.setAttribute('aria-selected', String(tab.dataset.map === mapMode));
+  const host = clearMap();
+  if (mapMode === 'recalls') return drawRecallMap(host);
+  return drawFactMap(host);
+}
+
+/** One fact, the person it belongs to, that person's other facts, and where it was heard. */
+function drawFactMap(host) {
   const m = selectedMemory;
-  if (!m) {
-    $('#detail-ref').textContent = '';
-    const p = people.find((x) => x.id === selectedPerson);
-    if (p) {
-      // A selected person, no memory yet: show their card rather than an empty panel.
-      const h = document.createElement('h3'); h.textContent = p.name;
-      const chips = document.createElement('div'); chips.className = 'chips';
-      for (const label of [(p.owner ?? !!p.is_owner) ? 'You' : relationOf(p) || 'Relation unknown',
-        `${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`, p.voiceSamples ? 'voice known' : 'no voice sample']) {
-        const c = document.createElement('span'); c.className = 'tag other'; c.textContent = label; chips.append(c);
-      }
-      const core = document.createElement('p'); core.className = 'q';
-      core.textContent = p.core || 'No core memory card yet. Dock a conversation to build one.';
-      box.append(h, chips, core);
-      box.append(Object.assign(document.createElement('p'), {
-        className: 'hint', textContent: 'Pick a memory from the layers to see its source and evidence.',
-      }));
-      return;
-    }
-    box.append(Object.assign(document.createElement('p'), {
-      className: 'hint', textContent: 'Pick a memory from the layers to see its source, date and evidence.',
-    }));
-    return;
+  const foot = $('#map-foot');
+  if (!m) { mapEmpty(host, 'Pick a memory from the layers to see what it connects to.'); return; }
+
+  const line = mapLines(host);
+  const person = m.person?.name || 'Unsorted';
+  const siblings = memories.filter((x) => x.ref !== m.ref && (x.person?.id ?? null) === (m.person?.id ?? null)).slice(0, 3);
+
+  const P = [50, 12], F = [50, 42], S = [50, 88];
+  const sibY = 67;
+  const sibX = siblings.length === 1 ? [50] : siblings.length === 2 ? [26, 74] : [17, 50, 83];
+
+  for (const [y, label] of [[12, 'who'], [42, 'what it knows'], [88, 'where it was heard']]) {
+    const band = document.createElement('span');
+    band.className = 'map-band';
+    band.style.top = `${y}%`;
+    band.textContent = label;
+    host.append(band);
   }
-  $('#detail-ref').textContent = m.ref || '';
+  mapNode(host, 'person', P[0], P[1], person);
+  siblings.forEach((s, i) => {
+    line(P[0], P[1], sibX[i], sibY, true);
+    mapNode(host, 'sib', sibX[i], sibY, s.text);
+  });
+  line(P[0], P[1], F[0], F[1]);
+  mapNode(host, 'fact', F[0], F[1], m.text);
+  line(F[0], F[1], S[0], S[1]);
+  mapNode(host, 'session', S[0], S[1], m.source?.session ? `session ${m.source.session}` : 'no saved session');
 
-  const h = document.createElement('h3'); h.textContent = m.text;
-  const chips = document.createElement('div'); chips.className = 'chips';
-  const chip = (label, cls) => {
-    if (!label) return;
-    const c = document.createElement('span'); c.className = `tag ${cls}`; c.textContent = label; chips.append(c);
-  };
-  chip(m.person?.name || 'Unsorted', 'other');
-  chip(m.kind, kindClass(m.kind));
-  chip(m.origin === 'declared' ? 'declared' : 'extracted', 'other');
-
-  const dl = document.createElement('dl'); dl.className = 'kv';
-  const add = (k, v) => {
-    if (!v) return;
-    const dt = document.createElement('dt'); dt.textContent = k;
-    const dd = document.createElement('dd'); dd.textContent = v;
-    dl.append(dt, dd);
-  };
-  add('Saved', dateOnly(m.createdAt));
-  add('Scope', m.scope);
-  add('Used', m.uses ? `${m.uses} ${m.uses === 1 ? 'time' : 'times'}` : 'never');
-  add('Evidence', m.source?.session ? `session ${m.source.session}` : 'none');
-
-  box.append(h, chips, dl);
-
+  const meta = document.createElement('span');
+  meta.textContent = [m.ref, dateOnly(m.createdAt), m.scope, m.uses ? `${m.uses} uses` : 'never used'].filter(Boolean).join(' · ');
+  foot.append(meta);
   if (m.source?.quote?.text) {
-    const q = document.createElement('p'); q.className = 'q';
+    const q = document.createElement('span');
+    q.className = 'quote';
     q.textContent = `“${m.source.quote.text}”`;
-    box.append(q);
-  } else {
-    const q = document.createElement('p'); q.className = 'hint';
-    q.textContent = 'No spoken quote was saved for this fact.';
-    box.append(q);
-  }
-
+    foot.append(q);
+  } else foot.append(footSpacer());
   if (m.source?.quote?.audioUrl) {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'play'; b.textContent = 'Play the moment';
-    b.addEventListener('click', () => {
-      const started = Number(m.source.quote.start);
-      const ended = Number(m.source.quote.end);
-      play({ url: m.source.quote.audioUrl, start: Number.isFinite(started) ? started : null, end: Number.isFinite(ended) ? ended : null });
-    });
-    box.append(b);
-  }
-}
-
-function renderRecall() {
-  const list = $('#recall-list');
-  $('#recall-count').textContent = `${traces.length}`;
-  if (!traces.length) {
-    list.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No questions asked yet.' }));
-    return;
-  }
-  list.replaceChildren(...traces.map((t) => {
-    const li = document.createElement('li'); li.className = 'rrow';
-
-    const grounded = !!t.grounded;
-    const q = document.createElement('p'); q.className = 'rq'; q.textContent = t.question;
-    const a = document.createElement('p'); a.className = 'ra'; a.textContent = t.answer || '';
-
-    const meta = document.createElement('div'); meta.className = 'rmeta';
-    const state = document.createElement('span');
-    state.className = `state ${grounded ? 'ok' : 'none'}`;
-    state.textContent = grounded ? 'verified' : 'no source';
-    meta.append(state);
-
-    const n = grounded ? sourceCount(t) : 0;
-    if (n) meta.append(Object.assign(document.createElement('span'), {
-      className: 'rsrc', textContent: `${n} ${n === 1 ? 'source' : 'sources'}`,
+    b.type = 'button'; b.className = 'act'; b.textContent = 'Play';
+    b.title = 'Play the moment this was heard';
+    b.addEventListener('click', () => play({
+      url: m.source.quote.audioUrl,
+      start: Number(m.source.quote.start),
+      end: Number(m.source.quote.end),
     }));
-    const when = dateOnly(t.created_at);
-    if (when) meta.append(Object.assign(document.createElement('span'), { className: 'rsrc', textContent: when }));
-
-    li.append(q, a, meta);
-    return li;
-  }));
+    foot.append(b);
+  }
 }
 
-/** How many distinct citations the retrieval steps produced (0 when it answered ungrounded). */
+/** One recall: the question, what Bonsai loaded, what it cited, and the answer. */
+function drawRecallMap(host) {
+  const foot = $('#map-foot');
+  if (!traces.length) { mapEmpty(host, 'No questions asked yet. Ask something in Chat.'); return; }
+  traceIndex = Math.min(Math.max(traceIndex, 0), traces.length - 1);
+  const t = traces[traceIndex];
+
+  const cited = new Set();
+  const loaded = new Set();
+  for (const step of t.trace || []) {
+    for (const c of step.cite || []) cited.add(c);
+    for (const l of step.loaded || []) loaded.add(l);
+  }
+  const refs = [...cited, ...[...loaded].filter((r) => !cited.has(r))].slice(0, 5);
+
+  const line = mapLines(host);
+  const Q = [50, 12], A = [50, 88];
+  const refY = 50;
+  const spread = refs.length === 1 ? [50] : refs.map((_, i) => 14 + (72 * i) / (refs.length - 1));
+
+  mapNode(host, 'question', Q[0], Q[1], t.question);
+  refs.forEach((r, i) => {
+    line(Q[0], Q[1], spread[i], refY);
+    const n = mapNode(host, cited.has(r) ? 'ref cited' : 'ref', spread[i], refY, r);
+    n.title = cited.has(r) ? 'Cited in the answer' : 'Retrieved, not cited';
+  });
+  if (!refs.length) {
+    const none = mapNode(host, 'ref', 50, refY, 'nothing retrieved');
+    none.title = 'No retrieval steps were recorded';
+  }
+  refs.forEach((r, i) => line(spread[i], refY, A[0], A[1]));
+  if (!refs.length) line(Q[0], Q[1], A[0], A[1], true);
+  mapNode(host, 'answer', A[0], A[1], t.answer || 'No answer saved.');
+
+  const state = document.createElement('span');
+  state.className = `state ${t.grounded ? 'ok' : 'none'}`;
+  state.textContent = t.grounded ? 'verified' : 'no source';
+  const when = document.createElement('span');
+  when.textContent = `${traceIndex + 1} / ${traces.length}${t.created_at ? ` · ${dateOnly(t.created_at)}` : ''}`;
+  foot.append(state, when, footSpacer());
+
+  const prev = document.createElement('button');
+  prev.type = 'button'; prev.className = 'step'; prev.textContent = '‹'; prev.setAttribute('aria-label', 'Previous recall');
+  prev.disabled = traceIndex === 0;
+  prev.addEventListener('click', () => { traceIndex -= 1; drawMap(); });
+  const next = document.createElement('button');
+  next.type = 'button'; next.className = 'step'; next.textContent = '›'; next.setAttribute('aria-label', 'Next recall');
+  next.disabled = traceIndex >= traces.length - 1;
+  next.addEventListener('click', () => { traceIndex += 1; drawMap(); });
+  foot.append(prev, next);
+}
+
 function sourceCount(trace) {
   const cited = new Set();
   const loaded = new Set();
@@ -520,6 +574,9 @@ const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : '');
 
 for (const tab of document.querySelectorAll('.ltab')) {
   tab.addEventListener('click', () => { layer = tab.dataset.layer; renderLayers(); });
+}
+for (const tab of document.querySelectorAll('.mtab')) {
+  tab.addEventListener('click', () => { mapMode = tab.dataset.map; drawMap(); });
 }
 $('#layer-search').addEventListener('input', (e) => { search = e.target.value; renderLayers(); });
 $('#layer-person').addEventListener('change', (e) => { selectedPerson = e.target.value || null; renderPeople(); renderLayers(); });

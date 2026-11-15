@@ -25,7 +25,7 @@ The layout is table-first, the way a CRM record works: a list you scan, a list y
 |---|---|---|
 | **People** (top left) | `GET /people` | A table — name (with the core memory as a subtitle), relation, fact count, voice-known dot. Selecting a row filters the layers and opens the person in the record panel. |
 | **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four tabs — **Inputs**, **Evidence**, **Facts**, **Core** — as a table with `Ref · Content · Person`, colour-coded kind tags, inline search and person/type filters. |
-| **Record** (right, full height) | the chosen fact + `GET /traces` | The selected memory: full text, `person / kind / origin` tags, label→value rows for saved date, scope, uses and evidence session, the original quote, and **Play the moment** when the audio exists. The lower part is **Recent recalls** — **verified** (moss) or **no source** (grey), citation count and date. Nothing is invented. |
+| **Memory map** (right, full height) | the chosen fact + `GET /traces` | A diagram in two modes. **Fact**: the person above, the fact in the middle with that person's other facts beside it, and the conversation it was heard in below — labelled `WHO / WHAT IT KNOWS / WHERE IT WAS HEARD`. **Recalls**: the question, the refs Bonsai retrieved (cited ones in moss, retrieved-only in grey), the answer, and ‹ › to step through recent recalls. The footer carries the fact's ref, date, scope, uses, the original quote and **Play**. |
 
 Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
 

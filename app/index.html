@@ -136,17 +136,16 @@
             <ul id="layer-list" class="layer-list"></ul>
           </section>
 
-          <section class="panel record-panel" aria-labelledby="p-detail">
+          <section class="panel record-panel" aria-labelledby="p-map">
             <header class="panel-head">
-              <h2 id="p-detail"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h7l4 4v12H7V4Z"/><path d="M14 4v4h4M9.5 12h5M9.5 15.5h5"/></svg>Selected memory</h2>
-              <span id="detail-ref" class="count"></span>
+              <h2 id="p-map"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8.2 6h7.6M7.4 8.1 10.8 15.9M16.6 8.1 13.2 15.9"/></svg>Memory map</h2>
+              <div class="map-toggle" role="tablist" aria-label="What the map shows">
+                <button class="mtab" type="button" data-map="fact" role="tab" aria-selected="true">Fact</button>
+                <button class="mtab" type="button" data-map="recalls" role="tab" aria-selected="false">Recalls</button>
+              </div>
             </header>
-            <div id="memory-detail" class="mem-detail"></div>
-
-            <div class="record-split">
-              <h3 class="sub-head">Recent recalls <span id="recall-count" class="count"></span></h3>
-              <ul id="recall-list" class="recall-list"></ul>
-            </div>
+            <div id="map-canvas" class="map-canvas"></div>
+            <div id="map-foot" class="map-foot"></div>
           </section>
         </div>
       </section>
