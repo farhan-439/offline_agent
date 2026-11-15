@@ -42,3 +42,48 @@ export function formatClipTime(c) {
   const span = Number.isFinite(c.start) ? `${t(c.start)}${Number.isFinite(c.end) ? `–${t(c.end)}` : ''}` : '';
   return [day, span].filter(Boolean).join(' · ');
 }
+
+const ACTIVE = new Set(['starting', 'recording', 'processing']);
+
+/**
+ * The orb menu: one entry point with three choices. Recording and live translation share the
+ * one microphone with voice questions, so while one runs the others explain why they're unavailable.
+ * Returns { active: null | 'conversation' | 'translate' | 'enroll' | 'ask', record, ask, translate }.
+ */
+export function orbMenuState(snap = {}) {
+  const rec = snap.recording || {};
+  const capture = snap.capture || {};
+  const askPhase = snap.ask?.phase || 'idle';
+  const running = ACTIVE.has(rec.phase) ? (rec.mode || 'conversation') : null;
+  const asking = askPhase !== 'idle';
+  const active = running || (asking ? 'ask' : null);
+  const noCapture = !capture.available;
+  const off = (label, hint) => ({ label, hint, disabled: true });
+  const why = running === 'translate' ? 'Stop translating first.' : running === 'enroll' ? 'Finish recording your voice first.'
+    : running ? 'Stop recording first.' : asking ? 'Finish your question first.' : null;
+  const record = running === 'conversation'
+    ? { label: rec.phase === 'processing' ? 'Saving the conversation…' : 'Stop recording', hint: 'Everyone nearby is being recorded.', disabled: rec.phase === 'processing', stop: true }
+    : noCapture ? off('Start recording', capture.message || 'Capture is not available.')
+    : why ? off('Start recording', why)
+    : { label: 'Start recording', hint: 'Remember a conversation. Kindred whispers who people are.', disabled: false };
+  const translate = running === 'translate'
+    ? { label: rec.phase === 'processing' ? 'Saving the conversation…' : 'Stop translating', hint: 'Translating what people say into English.', disabled: rec.phase === 'processing', stop: true }
+    : noCapture ? off('Live translation', capture.message || 'Capture is not available.')
+    : why ? off('Live translation', why)
+    : { label: 'Live translation', hint: 'Hear other languages in English, and remember the conversation.', disabled: false };
+  const ask = running ? off('Ask a question', why)
+    : { label: 'Ask a question', hint: 'Type or say it. Kindred answers from your memories.', disabled: false };
+  return { active, record, ask, translate };
+}
+
+/** "fr" → "French" (falls back to the code). */
+export function languageName(code) {
+  if (!code) return 'Another language';
+  try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch { return code; }
+}
+
+/** "1:05" for the orb's recording timer. */
+export function elapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}

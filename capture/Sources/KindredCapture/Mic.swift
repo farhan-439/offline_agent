@@ -60,6 +60,8 @@ final class MicCapture: @unchecked Sendable {
     var onLive: (() -> Void)?
     /// Every 16 kHz mono chunk as it arrives (live speaker detection streams these).
     var onChunk: (([Float]) -> Void)?
+    /// Same chunks with their sample index in the recording (live translation, Translate.swift).
+    var onIndexedChunk: (([Float], Int) -> Void)?
 
     func start(device: AudioDeviceID? = nil) throws {
         let input = engine.inputNode
@@ -91,8 +93,10 @@ final class MicCapture: @unchecked Sendable {
 
     /// One 16 kHz chunk from the mic (or the simulator): buffer it, stream it, track levels.
     func process(_ chunk: [Float]) {
-        samples.mutate { $0.append(contentsOf: chunk) }
+        var at = 0
+        samples.mutate { at = $0.count; $0.append(contentsOf: chunk) }
         onChunk?(chunk)
+        onIndexedChunk?(chunk, at)
         // Bluetooth headsets deliver pure zeros while switching into mic mode: only report
         // "live" once real signal arrives.
         var energy: Float = 0

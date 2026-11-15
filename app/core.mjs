@@ -31,6 +31,8 @@ export function localFetch(url, { method = 'GET', headers = {}, body, timeoutMs 
 
 /** "Teach Kindred my voice": speech needed for a usable voiceprint, and the recording's safety cap. */
 export const ENROLL_MIN_SECONDS = 6;
+/** Live translation lines kept for the orb. */
+export const MAX_TRANSLATIONS = 12;
 export const ENROLL_MAX_MS = 40_000;
 
 /** The owner's voiceprint from an enrollment session file: the voice that talked longest. */
@@ -160,6 +162,9 @@ export class KindredApp {
       case 'processing':
         this.recording = { ...this.recording, phase: 'processing' };
         break;
+      case 'translation':
+        this.addTranslation(e);
+        break;
       case 'speaking':
         this.emit('speaking', { device: e.device ?? null });
         return;
@@ -199,6 +204,22 @@ export class KindredApp {
     this.recording = { ...this.recording, voices };
   }
 
+  /** Live translation: keep the latest lines for the orb, and speak each English translation in order. */
+  addTranslation(e) {
+    const translation = typeof e.translation === 'string' ? e.translation.trim() : '';
+    if (!translation && !e.text) return;
+    const item = { seq: e.seq ?? null, language: e.language ?? null, text: e.text ?? '', translation: translation || null,
+      start: e.start ?? null, end: e.end ?? null, at: Date.now() };
+    const translations = [...this.recording.translations.filter((t) => t.seq === null || t.seq !== item.seq), item].slice(-MAX_TRANSLATIONS);
+    this.recording = { ...this.recording, translations };
+    this.emit('translation', item);
+    if (translation) {
+      // Queue so consecutive lines don't cut each other off.
+      this.translationSpeech = (this.translationSpeech || Promise.resolve())
+        .then(() => this.bridge.speak(translation)).catch((err) => this.emit('log', `speak failed: ${err.message}`));
+    }
+  }
+
   // ---------- record ----------
   startRecording({ place, mode = 'conversation' } = {}) {
     if (this.recordingTask || this.askListeningTask) throw new Error('Already recording.');
@@ -208,7 +229,8 @@ export class KindredApp {
     this.recording = { ...idleRecording(), mode, phase: 'starting', startedAt: Date.now() };
     this.changed();
     this.checkMemory(); // whispers need memory; recording works without it
-    this.recordingTask = (mode === 'enroll' ? this.runEnrollment() : this.runRecording(place)).finally(() => { this.recordingTask = null; });
+    this.translationSpeech = Promise.resolve();
+    this.recordingTask = (mode === 'enroll' ? this.runEnrollment() : this.runRecording(place, { translate: mode === 'translate' })).finally(() => { this.recordingTask = null; });
     return { started: true };
   }
 
@@ -273,13 +295,16 @@ export class KindredApp {
       rmSync(path.join(dir, name), { force: true });
   }
 
-  async runRecording(place) {
+  /** A conversation, or (translate: true) a live-translation session: capture sends `translation`
+   *  events while it records, and the saved session carries language + translation per line. */
+  async runRecording(place, { translate = false } = {}) {
     let result;
+    const mode = this.recording.mode;
     try {
-      result = await this.bridge.startRecording({ place });
+      result = await this.bridge.startRecording(translate ? { place, translate: true } : { place });
     } catch (e) {
       const cancelled = /cancel/i.test(e.message);
-      this.recording = { ...this.recording, phase: 'idle', error: cancelled ? null : e.message };
+      this.recording = { ...this.recording, mode: 'conversation', phase: 'idle', error: cancelled ? null : e.message };
       this.changed();
       this.emit('recording-done', { ok: false, cancelled, error: e.message });
       return null;
@@ -290,9 +315,9 @@ export class KindredApp {
     if (this.memory.ok) {
       try { ingested = await this.live.ingest(result); } catch (e) { ingestError = e.message; }
     } else ingestError = MEMORY_DOWN;
-    this.recording = { ...this.recording, phase: 'idle', last: { ...summary, ingested: !!ingested, ingestError } };
+    this.recording = { ...this.recording, mode: 'conversation', phase: 'idle', last: { ...summary, mode, ingested: !!ingested, ingestError } };
     this.changed();
-    this.emit('recording-done', { ok: true, ...summary, ingested: !!ingested, ingestError });
+    this.emit('recording-done', { ok: true, ...summary, mode, ingested: !!ingested, ingestError });
     return this.recording.last;
   }
 
@@ -407,5 +432,5 @@ export function normalisePerson(p) {
 }
 
 function idleRecording() {
-  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], error: null, startedAt: null, last: null };
+  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], translations: [], error: null, startedAt: null, last: null };
 }

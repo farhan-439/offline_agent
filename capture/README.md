@@ -17,11 +17,11 @@ npm test                                         # bridge + live-loop tests (fak
 
 | Command | What it does |
 |---|---|
-| `kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR]` | WhisperKit (word timestamps) + SpeakerKit diarization → contract JSONL. Non-speech tags (`[BLANK_AUDIO]`, `(music)`) are stripped. |
+| `kindred-capture process <audio.wav> [--session ID] [--place TEXT] [--out DIR] [--translate]` | WhisperKit (word timestamps) + SpeakerKit diarization → contract JSONL. Non-speech tags (`[BLANK_AUDIO]`, `(music)`) are stripped. |
 | `kindred-capture record [--place TEXT] [--out DIR] [--audio-dir DIR] [--seconds N]` | Mic → 16 kHz WAV in `data/audio/<session>.wav` until Enter (or N s), then `process`. Falls back to the built-in mic if AirPods/Bluetooth send only silence. |
 | `kindred-capture speak "<text>"` | TTSKit Qwen3-TTS, voice `ryan` (`KINDRED_VOICE=aiden` for the other native-English voice). |
-| `kindred-capture serve [--out DIR] [--audio-dir DIR] [--no-tts 1]` | Long-lived JSON-lines server: models load **once**. Protocol in `Sources/KindredCapture/Server.swift`. |
-| `kindred-capture provision` | Run once with Wi-Fi on. Downloads all models into `~/Library/Caches/Kindred/hub` and links the folders below. |
+| `kindred-capture serve [--out DIR] [--audio-dir DIR] [--no-tts 1] [--no-translate 1]` | Long-lived JSON-lines server: models load **once**. Protocol in `Sources/KindredCapture/Server.swift`. |
+| `kindred-capture provision [--only whisper-multi]` | Run once with Wi-Fi on. Downloads all models into `~/Library/Caches/Kindred/hub` and links the folders below. |
 | `kindred-capture license` | Argmax Pro license status as JSON (never prints the key). |
 
 ## Live whisper (`live.mjs`)
@@ -64,6 +64,8 @@ Each model loads from a local folder. Defaults are under `~/Library/Caches/Kindr
 | `KINDRED_TTS_MODEL` | `tts-model` | `argmaxinc/ttskit-coreml` Qwen3-TTS 0.6B |
 | `KINDRED_TTS_TOKENIZER` | `tts-tokenizer` | `Qwen/Qwen3-0.6B` tokenizer. TTSKit downloads it to `~/Documents/huggingface`, and `provision` copies it here. |
 | `KINDRED_SORTFORMER_MODEL` | `sortformer-model` | `argmaxinc/speakerkit-pro` (Pro, live detection) |
+| `KINDRED_WHISPER_MULTI_MODEL` | `whisper-multi-model` | multilingual `openai_whisper-small` for translation (see below) |
+| `KINDRED_WHISPER_MULTI_TOKENIZER` | `whisper-multi-tokenizer` | `openai/whisper-small` tokenizer |
 
 `provision` sets all of these up. If a folder is missing, the loader downloads instead and warns on stderr. Whisper is staged at a stable path (`whisper-staged`) so Core ML reuses its compiled cache.
 
@@ -98,11 +100,57 @@ If there is no valid key, or `KINDRED_NO_PRO=1` is set, everything falls back to
 
 Pro also offers streaming diarization (`SpeakerKitPro.makeStreamSession` / `makeDiarizeStreamSession`), Sortformer and `LiveTranscriber`. That's the path to live `speaker` events. It has no public embedding API beyond the OSS centroids.
 
+## Translation
+
+For travel: someone speaks French, Spanish, Japanese…, and Kindred shows (and the app can speak) the English while they talk, then remembers both. Code: `Sources/KindredCapture/Translate.swift`.
+
+**Model.** `openai_whisper-small` (multilingual, 486 MB on disk), staged as `whisper-multi-model` + `whisper-multi-tokenizer` (`kindred-capture provision --only whisper-multi`, or as step 5/5 of a full `provision`). It is loaded with `download: false` from the local folder, and verified with all network blocked (`sandbox-exec`, 11/14). `base.en` stays the model for normal English recording: it can't detect languages or translate, and the plain path is untouched. Why small: tiny/base multilingual translate poorly; `large-v3-v20240930` ("turbo") was trained without the translate task; medium is 1.5 GB with a 24-layer decoder. `KINDRED_WHISPER_MULTI_VARIANT` picks another variant at provision time. Comparison measured on this M2: see the table below.
+
+**How.** Whisper's own language detection per chunk, then two decodes of the same clip run in parallel: `task: .transcribe` in the detected language (the original `text`) and `task: .translate` (English). English chunks only pay for the detection (~0.1–0.2 s) and are skipped. Chunks come from an energy VAD (`SpeechChunker`): cut at ≥ 0.5 s of silence, or at the quietest point once a chunk reaches 7 s (`KINDRED_TRANSLATE_SILENCE_MS`, `KINDRED_TRANSLATE_MAX_S`). The mic callback only does arithmetic on 30 ms frames. Whisper runs on its own task, so the mic is never blocked. Nothing is spoken from Swift.
+
+**Live events** (`record-start` with `"translate": true`, or `startRecording({ translate: true })`):
+
+```jsonc
+{"event":"translating","id":1,"model":"openai_whisper-small"}            // right after record-start
+{"event":"translation","id":1,"seq":1,"language":"fr","text":"Bonjour, excusez-moi, la gare est à 10 minutes à pied. Prenez la deuxième rue à gauche.",
+ "translation":"Hello, excuse me, the station is 10 minutes away, take the second left street.","start":4.54,"end":10.54,"final":false}
+```
+
+`start`/`end` are seconds into the recording (the same timeline as utterances in the session file). `final:false` means it is a live event and is not written to the file, like live `speaker` events. `seq` counts the translation events in one recording. English is never emitted. Live speaker detection (`Live.swift`) runs alongside, unchanged. `serve` preloads the model after TTS and emits `{"event":"translate-ready","ms":…}` (`--no-translate 1` skips the preload; it then loads on first use), or `translate-unavailable` with an error. Chunks heard while the model is still loading wait in a queue.
+
+**Session file** (`process --translate`, `"translate": true` on `record-start`/`process`, `processFile(audio, { translate: true })`): every utterance gets `language` and, when it isn't English, `translation` (docs/CONTRACT.md's optional fields; memory indexes both). The reply adds `"translated": n`. Whisper over a whole recording picks one language per 30 s window and then drops or garbles the other language (on our mixed test it labelled everything `de` and lost the French and Spanish). So translate mode instead uses the live chunks, split where the diarized speaker changes. Each piece is its own utterance with its own language. Diarization and voiceprints are the same as without translation.
+
+```jsonc
+{"type":"utterance","id":"…#0002","speaker":"S0","start":4.53,"end":10.53,"language":"fr",
+ "text":"Bonjour, excusez-moi, la gare est à 10 minutes à pied. Prenez la deuxième rue à gauche.",
+ "translation":"Hello, excuse me, the station is at 10 minutes to the left. Take the second street to the left.", …}
+{"type":"utterance","id":"…#0001","speaker":"S1","start":0,"end":3.6,"language":"en","text":"Thanks so much. Could you tell me where the train station is?", …}
+```
+
+**Measured (11/14, M2 16 GB, macOS `say` voices → 16 kHz WAV).** Live = `serve` + `record-start` with `simulate` at real-time speed, Sortformer live speaker detection running at the same time (its `speaker` events kept coming).
+
+| Clip | Detected | Original (Whisper small) | Translation (small) |
+|---|---|---|---|
+| Thomas, fr | fr (1.00) | …la gare est à 10 minutes à pied. Prenez la deuxième rue à gauche. | Hello, excuse me, the station is 10 minutes away, take the second left street. |
+| Thomas, fr | fr (1.00) | …le train pour Lyon par à 15h30, quai numéro 4. | …the train for Lyon-Pare at 5.30, quai number 4. (wrong time) |
+| Mónica, es | es (1.00) | Hay un restaurante muy bueno al lado de la iglesia. | There is a very good restaurant next to the church. |
+| Anna, de | de (0.99) | Die Apotheke ist gleich um die Ecke. Sie hat bis 8 Uhr abends geöffnet. | The pharmacy is around the corner. It opened until 8 o'clock in the evening. |
+| Kyoko, ja | ja | すみません、駅はどこですか?… | Excuse me, where is the station? Please turn right to the second corner. |
+| Alice, it | it | Il binario è cambiato, adesso è il numero 7. | The binary has changed, now it is number 7. |
+| Samantha, en | en (1.00) | — skipped live; `language:"en"` in the file | — |
+
+- **Live latency, speech end → `translation` event: 0.95–2.5 s** (11 chunks over 2 runs). Of that, Whisper takes 0.65–1.1 s (detect ~0.1–0.24 s, then parallel transcribe + translate 0.54–0.92 s). The rest is the VAD waiting for a 0.5 s pause, or a 7 s forced cut (`say` barely pauses between sentences). The queue never backed up.
+- The mixed 33 s conversation (en → fr → es → de, 3 voices) gave 6 utterances with the right language each, 5 translated, and 3 speakers with voiceprints. Without translate, the same file still goes through `base.en` exactly as before (and garbles the foreign speech, as expected).
+- `process --translate`: model load 0.7 s (the first load ever compiles Core ML: 24 s, once). It takes 1.9–2.9 s per 5–12 s clip, including model loading.
+- **Model comparison** (same clips): `large-v2_949MB` translates noticeably better ("leaves at 3.30 pm, platform number 4", "The platform has changed"), but live it took 3.6–6 s per chunk to decode and fell behind (7–10 s latency). `small_216MB` (quantized) has similar quality to small, with some extra errors ("K-4"), and was no faster here. So `openai_whisper-small` is the default. For better session-file quality only, point `KINDRED_WHISPER_MULTI_MODEL` at large-v2 (this slows live events too).
+
+**Limits.** Only tested with synthetic voices and a simulated mic, not with real people, noise or accents. Small mistranslates numbers and idioms ("15h30" → "5.30"), so treat translations as a gist. Language detection on chunks under about 1 s is unreliable (shorter than 0.4 s of speech is dropped). Within one chunk, code-switching gets one language. Translation goes into English only (Whisper's limit); English speech gets no reverse translation. A translation spoken on the laptop speakers is heard by the mic. It is English, so it's skipped live, but it ends up in the session file. Use earbuds. Utterances in translate mode are speech chunks (≤ 7 s), not the word-level segments of the English path.
+
 ## Still to do
 
 Task list: see "Partner" in the root README §5.
 - Live recording with the mic and real people: Sortformer streaming output has not been seen yet. Calibrate `KINDRED_VOICE_THRESHOLD` on real voices.
 - Over-segmentation: try merging same-session clusters whose own-audio voiceprints match.
-- Translation (`language` + `translation` on utterances; memory already accepts them). Agree the contract change with Farhan.
+- Translation on a real mic with real people, background noise and accents (only `say` voices so far).
 
 Validate output against the fixtures: `cd ../memory && npm run kindred -- ingest <your.jsonl> && npm run kindred -- dock`.

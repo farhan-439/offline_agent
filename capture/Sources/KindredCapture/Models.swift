@@ -13,6 +13,8 @@ import Argmax
 //   KINDRED_SPEAKER_MODEL      SpeakerKit (pyannote) Core ML folder
 //   KINDRED_TTS_MODEL          TTSKit Qwen3-TTS 0.6B folder
 //   KINDRED_TTS_TOKENIZER      Qwen/Qwen3-0.6B tokenizer folder
+//   KINDRED_WHISPER_MULTI_MODEL      multilingual WhisperKit folder (openai_whisper-small) for translation
+//   KINDRED_WHISPER_MULTI_TOKENIZER  its tokenizer (openai/whisper-small)
 // If a folder is missing, the loader falls back to downloading (needs internet) and says so on
 // stderr — useful once for provisioning, never during the demo.
 
@@ -47,20 +49,52 @@ let sessionDecodeOptions = DecodingOptions(
     usePrefillPrompt: true, skipSpecialTokens: true, withoutTimestamps: false, wordTimestamps: true, suppressBlank: true
 )
 
+/// Same, for the multilingual model: Whisper detects the language (per 30 s window) instead of forcing English.
+let sessionMultiDecodeOptions = DecodingOptions(
+    verbose: false, task: .transcribe, language: nil, temperature: 0,
+    usePrefillPrompt: true, detectLanguage: true, skipSpecialTokens: true, withoutTimestamps: false, wordTimestamps: true, suppressBlank: true
+)
+
+/// Text-only decoding of one short clip (live chunks, per-utterance translation). `language: nil` = detect.
+/// `task: .translate` makes Whisper write English whatever the input language.
+func clipDecodeOptions(task: DecodingTask, language: String?) -> DecodingOptions {
+    DecodingOptions(verbose: false, task: task, language: language, temperature: 0, temperatureFallbackCount: 2,
+                    usePrefillPrompt: true, detectLanguage: language == nil, skipSpecialTokens: true, withoutTimestamps: true,
+                    wordTimestamps: false, suppressBlank: true, compressionRatioThreshold: 2.4, logProbThreshold: -1.0,
+                    firstTokenLogProbThreshold: -1.5, noSpeechThreshold: 0.6)
+}
+
 func loadWhisper() async throws -> WhisperKit {
+    try await loadWhisper(modelKey: "KINDRED_WHISPER_MODEL", model: "whisper-model", tokenizerKey: "KINDRED_WHISPER_TOKENIZER",
+                          tokenizer: "whisper-tokenizer", staged: "whisper-staged", fallbackVariant: env("KINDRED_WHISPER_VARIANT") ?? "base.en", label: "whisper")
+}
+
+/// Multilingual Whisper for translation (language detection + `task: .translate`). base.en can't do either.
+/// openai_whisper-small: 486 MB, the smallest size whose X→English translation is usable
+/// (base/tiny multilingual translate poorly; medium is 1.5 GB and ~3× slower to decode).
+let defaultMultiVariant = "openai_whisper-small"
+
+func loadWhisperMulti() async throws -> WhisperKit {
+    try await loadWhisper(modelKey: "KINDRED_WHISPER_MULTI_MODEL", model: "whisper-multi-model", tokenizerKey: "KINDRED_WHISPER_MULTI_TOKENIZER",
+                          tokenizer: "whisper-multi-tokenizer", staged: "whisper-multi-staged",
+                          fallbackVariant: env("KINDRED_WHISPER_MULTI_VARIANT") ?? defaultMultiVariant, label: "whisper-multi")
+}
+
+func loadWhisper(modelKey: String, model defaultModel: String, tokenizerKey: String, tokenizer defaultTokenizer: String,
+                 staged: String, fallbackVariant: String, label: String) async throws -> WhisperKit {
     let t0 = Date()
-    defer { Out.log("whisper ready in \(Int(Date().timeIntervalSince(t0) * 1000)) ms") }
-    if let model = modelPath("KINDRED_WHISPER_MODEL", "whisper-model") {
-        if let tokenizer = modelPath("KINDRED_WHISPER_TOKENIZER", "whisper-tokenizer") {
-            let staging = kindredCache.appendingPathComponent("whisper-staged")
+    defer { Out.log("\(label) ready in \(Int(Date().timeIntervalSince(t0) * 1000)) ms") }
+    if let model = modelPath(modelKey, defaultModel) {
+        if let tokenizer = modelPath(tokenizerKey, defaultTokenizer) {
+            let staging = kindredCache.appendingPathComponent(staged)
             try stageWhisper(model: model, tokenizer: tokenizer, into: staging)
             return try await WhisperKit(WhisperKitConfig(modelFolder: staging.path, tokenizerFolder: staging, verbose: false, prewarm: false, load: true, download: false))
         }
-        Out.log("warning: no local Whisper tokenizer (KINDRED_WHISPER_TOKENIZER); WhisperKit may try the network for it")
+        Out.log("warning: no local \(label) tokenizer (\(tokenizerKey)); WhisperKit may try the network for it")
         return try await WhisperKit(WhisperKitConfig(modelFolder: model, verbose: false, download: false))
     }
-    Out.log("warning: no local Whisper model (KINDRED_WHISPER_MODEL); downloading — needs internet")
-    return try await WhisperKit(WhisperKitConfig(model: env("KINDRED_WHISPER_VARIANT") ?? "base.en", verbose: false))
+    Out.log("warning: no local \(label) model (\(modelKey)); downloading — needs internet. Run `kindred-capture provision` once online.")
+    return try await WhisperKit(WhisperKitConfig(model: fallbackVariant, verbose: false))
 }
 
 /// Pyannote diarization (it produces the per-speaker centroid embeddings we use as voiceprints).
@@ -98,6 +132,30 @@ func voice(_ name: String? = nil) -> Qwen3Speaker { Qwen3Speaker(rawValue: name 
 
 /// Sampling tuned in Second Nature for short, natural lines. Budget scales with text length
 /// (Kindred whisper lines are ≤ ~30 words / 220 chars).
-func whisperLineOptions(chars: Int) -> GenerationOptions {
-    GenerationOptions(temperature: 0.9, topK: 50, repetitionPenalty: 1.08, maxNewTokens: min(240, max(60, chars + 20)), concurrentWorkerCount: 1)
+func whisperLineOptions(chars: Int, language: Qwen3Language = .english) -> GenerationOptions {
+    // Qwen3-TTS emits ~12 audio tokens a second. One Chinese/Japanese/Korean character is a whole
+    // syllable, so budget per character there, or long lines get cut off.
+    let dense: Set<Qwen3Language> = [.chinese, .japanese, .korean]
+    let budget = dense.contains(language) ? chars * 5 + 20 : chars + 20
+    return GenerationOptions(temperature: 0.9, topK: 50, repetitionPenalty: 1.08, maxNewTokens: min(240, max(60, budget)), concurrentWorkerCount: 1)
+}
+
+/// BCP-47 code ("fr", "zh-CN") → a language Qwen3-TTS can speak, or nil if it can't.
+func ttsLanguage(_ code: String?) -> Qwen3Language? {
+    guard let code, let base = code.lowercased().split(separator: "-").first else { return .english }
+    let map: [String: Qwen3Language] = ["en": .english, "zh": .chinese, "ja": .japanese, "ko": .korean, "de": .german,
+                                        "fr": .french, "ru": .russian, "pt": .portuguese, "es": .spanish, "it": .italian]
+    return map[String(base)]
+}
+
+/// The voice for a language: Qwen3-TTS's native speakers where it has one, else the English default
+/// (KINDRED_VOICE, "ryan"). An explicit voice name always wins.
+func voice(_ name: String?, for language: Qwen3Language) -> Qwen3Speaker {
+    if let name, let v = Qwen3Speaker(rawValue: name) { return v }
+    switch language {
+        case .chinese: return .vivian
+        case .japanese: return .onoAnna
+        case .korean: return .sohee
+        default: return voice()
+    }
 }

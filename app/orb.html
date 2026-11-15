@@ -7,24 +7,59 @@
   <link rel="stylesheet" href="orb.css">
 </head>
 <body>
-  <div id="stage" class="stage" data-phase="idle">
-    <section id="card" class="card" hidden aria-live="assertive">
+  <div id="stage" class="stage" data-phase="idle" data-mode="conversation" data-view="menu">
+    <section id="card" class="card" hidden aria-live="polite">
       <header class="card-head">
+        <button id="back" type="button" class="back" hidden aria-label="Back to the menu">← Back</button>
         <span id="card-label" class="card-label">Kindred</span>
-        <button id="card-close" type="button" class="close" aria-label="Dismiss">✕</button>
+        <button id="card-close" type="button" class="close" aria-label="Close (Kindred keeps running)">✕</button>
       </header>
-      <p id="card-text" class="card-text"></p>
-      <p id="ask-status" class="ask-status" aria-live="polite"></p>
-      <form id="orb-ask-form" class="orb-ask-form" autocomplete="off">
-        <label class="sr-only" for="orb-question">Ask Kindred</label>
-        <input id="orb-question" type="text" maxlength="500" placeholder="Ask about a memory…" spellcheck="true">
-        <button id="orb-send" type="submit">Send</button>
-      </form>
-      <button id="orb-mic" type="button" class="mic">🎙 Talk to Kindred</button>
+
+      <!-- One orb, three choices -->
+      <div id="view-menu" class="view">
+        <div class="choices" role="group" aria-label="What would you like to do?">
+          <button id="choice-record" type="button" class="choice record">
+            <span class="choice-icon" aria-hidden="true">●</span>
+            <span class="choice-text"><strong id="record-label">Start recording</strong><small id="record-hint"></small></span>
+          </button>
+          <button id="choice-ask" type="button" class="choice ask">
+            <span class="choice-icon" aria-hidden="true">?</span>
+            <span class="choice-text"><strong id="ask-label">Ask a question</strong><small id="ask-hint"></small></span>
+          </button>
+          <button id="choice-translate" type="button" class="choice translate">
+            <span class="choice-icon" aria-hidden="true">文A</span>
+            <span class="choice-text"><strong id="translate-label">Live translation</strong><small id="translate-hint"></small></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Recording or translating -->
+      <div id="view-live" class="view" hidden>
+        <p class="live-head"><span class="live-dot" aria-hidden="true"></span><span id="live-title">Recording</span><span class="live-time" id="live-time">0:00</span></p>
+        <p id="live-note" class="live-note"></p>
+        <ul id="live-list" class="live-list" aria-live="polite"></ul>
+        <p id="live-empty" class="live-empty"></p>
+        <button id="live-stop" type="button" class="stop">Stop</button>
+      </div>
+
+      <!-- Ask: type or talk -->
+      <div id="view-ask" class="view" hidden>
+        <p id="card-text" class="card-text"></p>
+        <p id="ask-status" class="ask-status" aria-live="polite"></p>
+        <form id="orb-ask-form" class="orb-ask-form" autocomplete="off">
+          <label class="sr-only" for="orb-question">Ask Kindred</label>
+          <input id="orb-question" type="text" maxlength="500" placeholder="Ask about a memory…" spellcheck="true">
+          <button id="orb-send" type="submit">Send</button>
+        </form>
+        <button id="orb-mic" type="button" class="mic">🎙 Talk to Kindred</button>
+      </div>
+
+      <p id="notice" class="notice" hidden aria-live="assertive"></p>
     </section>
-    <button id="orb" type="button" class="orb" aria-label="Open Kindred conversation. Right-click for menu" title="Talk to Kindred">
+
+    <button id="orb" type="button" class="orb" aria-label="Kindred. Click for options, right-click for more" title="Kindred">
       <span class="orb-core" aria-hidden="true"></span><span class="orb-glow" aria-hidden="true"></span>
-      <span id="orb-rec" class="orb-rec" hidden>REC</span>
+      <span id="orb-badge" class="orb-badge" hidden aria-hidden="true"></span>
     </button>
   </div>
   <script type="module" src="orb.js"></script>

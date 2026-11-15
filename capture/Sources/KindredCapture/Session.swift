@@ -40,10 +40,10 @@ func ownVoiceprint(embedder: SpeakerKit, clip: [Float]) async -> [Float]? {
     return result.speakerCentroidEmbeddings.max(by: { count($0.key) < count($1.key) })?.value
 }
 
-struct SessionResult { let session: String; let jsonl: URL; let audio: String; let utterances: Int; let speakers: Int }
+struct SessionResult { let session: String; let jsonl: URL; let audio: String; let utterances: Int; let speakers: Int; var translated: Int? = nil }
 
 func writeSession(audio: [Float], audioPath: String, session: String, place: String?, startedAt: Date,
-                  outDir: URL, whisper: WhisperKit, speakers: SpeakerKit) async throws -> SessionResult {
+                  outDir: URL, whisper: WhisperKit, speakers: SpeakerKit, multilingual: WhisperKit? = nil) async throws -> SessionResult {
     try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
     let outURL = outDir.appendingPathComponent("\(session).jsonl")
     FileManager.default.createFile(atPath: outURL.path, contents: nil)
@@ -53,26 +53,46 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
     try emit(["type": "session_start", "session": session, "startedAt": iso(startedAt), "place": place], to: out)
     Out.log("audio: \(String(format: "%.1f", Double(audio.count) / 16000)) s")
 
-    async let transcription = whisper.transcribe(audioArray: audio, decodeOptions: sessionDecodeOptions)
-    async let diarization = speakers.diarize(audioArray: audio, options: sessionDiarizationOptions())
-    let (t, d) = try await (transcription, diarization)
-
-    // Merge: SpeakerKit assigns a speaker to each word, grouped into speaker-homogeneous segments.
-    var n = 0
+    var n = 0, translated = 0
     var seconds: [Int: Float] = [:]
     var ranges: [Int: [(start: Float, end: Float)]] = [:]
-    for segments in d.addSpeakerInfo(to: t) {
-        for seg in segments {
-            let text = cleanTranscript(seg.text)
-            guard !text.isEmpty, let sid = seg.speaker.speakerId else { continue }
+    let d: DiarizationResult
+    if let multilingual {
+        // Translate mode (Translate.swift): per speech chunk language detection + transcription in that
+        // language + English translation, speakers from the same whole-session diarization as below.
+        d = try await speakers.diarize(audioArray: audio, options: sessionDiarizationOptions())
+        let segs = d.segments.compactMap { s in s.speaker.speakerId.map { (speaker: $0, start: s.startTime, end: s.endTime) } }
+        for u in await translatedUtterances(multilingual, audio: audio, segments: segs) {
             n += 1
-            seconds[sid, default: 0] += seg.endTime - seg.startTime
-            ranges[sid, default: []].append((seg.startTime, seg.endTime))
+            if u.translation != nil { translated += 1 }
+            seconds[u.speaker, default: 0] += u.end - u.start
+            ranges[u.speaker, default: []].append((u.start, u.end))
             try emit([
                 "type": "utterance", "session": session, "id": String(format: "%@#%04d", session, n),
-                "speaker": "S\(sid)", "start": Double(seg.startTime), "end": Double(seg.endTime),
-                "text": text, "audio": audioPath,
+                "speaker": "S\(u.speaker)", "start": round2(Double(u.start)), "end": round2(Double(u.end)),
+                "text": u.text, "audio": audioPath, "language": u.language, "translation": u.translation,
             ], to: out)
+        }
+    } else {
+        async let transcription = whisper.transcribe(audioArray: audio, decodeOptions: sessionDecodeOptions)
+        async let diarization = speakers.diarize(audioArray: audio, options: sessionDiarizationOptions())
+        let t: [TranscriptionResult]
+        (t, d) = try await (transcription, diarization)
+
+        // Merge: SpeakerKit assigns a speaker to each word, grouped into speaker-homogeneous segments.
+        for segments in d.addSpeakerInfo(to: t) {
+            for seg in segments {
+                let text = cleanTranscript(seg.text)
+                guard !text.isEmpty, let sid = seg.speaker.speakerId else { continue }
+                n += 1
+                seconds[sid, default: 0] += seg.endTime - seg.startTime
+                ranges[sid, default: []].append((seg.startTime, seg.endTime))
+                try emit([
+                    "type": "utterance", "session": session, "id": String(format: "%@#%04d", session, n),
+                    "speaker": "S\(sid)", "start": Double(seg.startTime), "end": Double(seg.endTime),
+                    "text": text, "audio": audioPath,
+                ], to: out)
+            }
         }
     }
     // Voiceprints, L2-normalised (docs/CONTRACT.md); null if none could be computed.
@@ -89,5 +109,6 @@ func writeSession(audio: [Float], audioPath: String, session: String, place: Str
     }
     try emit(["type": "session_end", "session": session, "endedAt": iso(startedAt.addingTimeInterval(Double(audio.count) / 16000))], to: out)
     Out.log("wrote \(n) utterances, \(seconds.count) speakers → \(outURL.path)")
-    return SessionResult(session: session, jsonl: outURL, audio: audioPath, utterances: n, speakers: seconds.count)
+    return SessionResult(session: session, jsonl: outURL, audio: audioPath, utterances: n, speakers: seconds.count,
+                         translated: multilingual == nil ? nil : translated)
 }

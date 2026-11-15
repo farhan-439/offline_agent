@@ -73,3 +73,26 @@ test('a finished session file is accepted by /ingest', async () => {
   const r = await live.ingest({ jsonl: file });
   assert.deepEqual(r.sessions, ['s-live']);
 });
+
+test('a translated session file keeps language + translation in memory (real capture output shape)', async () => {
+  const { live } = make();
+  const file = path.join(dir, 's-fr.jsonl');
+  // Lines as `process --translate` wrote them for a French `say -v Thomas` clip (11/14).
+  writeFileSync(file, [
+    { type: 'session_start', session: 's-fr', startedAt: '2026-11-14T19:00:00Z' },
+    { type: 'utterance', session: 's-fr', id: 's-fr#0001', speaker: 'S1', start: 0, end: 3.6, language: 'en', text: 'Could you tell me where the train station is?', audio: 'data/audio/s-fr.wav' },
+    { type: 'utterance', session: 's-fr', id: 's-fr#0002', speaker: 'S0', start: 4.53, end: 10.53, language: 'fr',
+      text: 'Bonjour, excusez-moi, la gare est à 10 minutes à pied. Prenez la deuxième rue à gauche.',
+      translation: 'Hello, excuse me, the station is 10 minutes away, take the second left street.', audio: 'data/audio/s-fr.wav' },
+    { type: 'speaker', session: 's-fr', speaker: 'S0', voiceprint: unit(5), seconds: 6, final: true },
+    { type: 'speaker', session: 's-fr', speaker: 'S1', voiceprint: unit(2), seconds: 3.6, final: true },
+    { type: 'session_end', session: 's-fr', endedAt: '2026-11-14T19:00:12Z' },
+  ].map((e) => JSON.stringify(e)).join('\n'));
+  const r = await live.ingest({ jsonl: file });
+  assert.deepEqual(r.sessions, ['s-fr']);
+  const row = db.prepare('SELECT language, translation FROM utterances WHERE id = ?').get('s-fr#0002');
+  assert.equal(row.language, 'fr');
+  assert.match(row.translation, /station/);
+  const hit = db.prepare("SELECT u.id FROM utterances_fts f JOIN utterances u ON u.rowid = f.rowid WHERE utterances_fts MATCH 'station' AND u.session = 's-fr' ORDER BY u.id").all();
+  assert.deepEqual(hit.map((h) => h.id), ['s-fr#0001', 's-fr#0002']);
+});

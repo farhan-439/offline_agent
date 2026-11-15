@@ -7,7 +7,7 @@ One hub window with three screens, a floating orb, and a small chat window opene
 | **Record** | One big button. While recording, a red banner, a red pulsing button and `● Recording` in the title make the recording state visible (privacy). Shows the mic in use (`mic-live`), each live voice as it's detected (`speaker`, `final:false`), and who it is once memory recognises it. On stop, the session file is sent to memory `/ingest`. |
 | **People** | "Dock today's conversations" calls memory `/dock`, then lists people from `GET /people`: name, relation and core memory card. |
 | **Ask** | Text box → memory `/ask`. The answer is shown and spoken (Argmax TTSKit, Mac voice as fallback). Cited memory text and photos are shown, and each cited clip has a ▶ Play button for its time range. |
-| **Orb** | Always-on-top bubble at the bottom of the screen. Click it to open a conversation panel: type a question or tap **Talk to Kindred**, speak, then tap **Done speaking**. Argmax transcribes the question, Bonsai retrieves the answer, and Argmax speaks it. The temporary question recording is deleted. The orb also shows live identity whispers during conversation recording. Right-click for a menu. |
+| **Orb** | The one control for everything. Always-on-top bubble at the bottom of the screen; click it for a menu with three big choices: **Start recording**, **Ask a question** (type, or tap **Talk to Kindred** and speak), **Live translation**. While recording or translating, the card shows the timer, voices heard (with match %) or live translations, and one **Stop** button; the other choices are greyed out with the reason (they share the microphone). The orb stays an orb: recording adds a thin red ring and a pulsing red dot, translating a cyan ring and a 文A badge. Whispers ("This is Dr. Patel…") appear on the card over any view. Right-click for a menu. |
 
 ## Run
 
@@ -46,3 +46,7 @@ On the **People** screen, press **Teach Kindred my voice**, read the passage alo
 It refuses with a clear message if it heard less than 6 s of speech. If a second voice talked for more than 20% of the time, it still enrolls the main voice but tells you to record alone. Recording is capped at 40 s.
 
 Measured on synthetic voices (11/14): an owner enrolled from 12 s of reading was recognised in a different conversation at **0.873** with 7.6 s of their speech. Fragments under about 2 s scored 0.70–0.73 (below the 0.85 threshold), and another person scored 0.35–0.68. Real voices still need checking.
+
+## Live translation (orb → Live translation)
+
+Starts a recording with `translate: true` (`KindredApp.startRecording({ mode: 'translate' })`). Capture sends live `{"event":"translation","seq","language","text","translation",…}` events. Each one is shown on the orb card (original in grey, English large; the latest four) and its English is spoken in order through Argmax TTS, so use earbuds. A repeated `seq` replaces the earlier line. On stop, the session is saved to memory like any conversation, with `language` and `translation` on each line, so later questions can be answered from it. The capture side is in `capture/` (see its README).

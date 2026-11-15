@@ -15,8 +15,15 @@ out({ event: 'ready', stt: true, diarize: true, tts: true });
 let rec = null;
 require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
   const c = JSON.parse(l);
-  if (c.cmd === 'record-start') { rec = c.id; out({ event: 'recording', id: c.id, session: c.session || 's1' }); out({ event: 'mic-live', id: c.id, device: 'Fake Mic' }); }
+  if (c.cmd === 'record-start') {
+    rec = c.id; out({ event: 'recording', id: c.id, session: c.session || 's1' }); out({ event: 'mic-live', id: c.id, device: 'Fake Mic' });
+    if (c.translate === true) {
+      out({ event: 'translating', id: c.id, model: 'openai_whisper-small' });
+      out({ event: 'translation', id: c.id, seq: 1, language: 'fr', text: 'Où est la gare ?', translation: 'Where is the station?', start: 1.2, end: 2.9, final: false });
+    }
+  }
   else if (c.cmd === 'record-stop') { out({ event: 'processing', id: rec }); out({ id: rec, session: 's1', jsonl: '/x/s1.jsonl', audio: '/x/s1.wav', utterances: 3, speakers: 2 }); }
+  else if (c.cmd === 'process' && c.translate === true) out({ id: c.id, session: 's2', jsonl: '/x/s2.jsonl', audio: c.audio, utterances: 2, speakers: 1, translated: 1 });
   else if (c.cmd === 'record-cancel') out({ id: rec, error: 'Recording cancelled.' });
   else if (c.cmd === 'speak') out({ id: c.id, spoken: true, text: c.text });
   else if (c.cmd === 'process') out({ id: c.id, error: 'Existing audio file is required.' });
@@ -38,6 +45,38 @@ test('record → stop resolves with the session file and forwards events', async
   assert.ok(events.some((e) => e.type === 'mic-live' && e.device === 'Fake Mic'));
   assert.ok(events.some((e) => e.type === 'processing'));
   assert.equal(b.status().recording, false);
+  b.close();
+});
+
+test('plain recording sends no translate flag and gets no translation events', async () => {
+  const events = [];
+  const b = make(events);
+  const rec = b.startRecording({ place: 'porch' });
+  b.stopRecording();
+  await rec;
+  assert.ok(!events.some((e) => e.type === 'translation' || e.type === 'translating'));
+  b.close();
+});
+
+test('translate is passed through and live translation events are forwarded', async () => {
+  const events = [];
+  const b = make(events);
+  await b.whenReady();
+  const rec = b.startRecording({ translate: true, simulate: 'fr.wav' });
+  await new Promise((r) => setTimeout(r, 50));
+  b.stopRecording();
+  const r = await rec;
+  assert.equal(r.jsonl, '/x/s1.jsonl');
+  const t = events.find((e) => e.type === 'translation');
+  assert.deepEqual(t, { type: 'translation', id: 1, seq: 1, language: 'fr', text: 'Où est la gare ?', translation: 'Where is the station?', start: 1.2, end: 2.9, final: false });
+  assert.ok(events.some((e) => e.type === 'translating' && e.model === 'openai_whisper-small'));
+  b.close();
+});
+
+test('processFile passes translate', async () => {
+  const b = make();
+  const r = await b.processFile('/tmp/fr.wav', { translate: true });
+  assert.equal(r.translated, 1);
   b.close();
 });
 

@@ -6,6 +6,7 @@
 //   const rec = capture.startRecording({ place: 'porch' });  // resolves after stopRecording()
 //   ...; capture.stopRecording(); const { jsonl } = await rec; // → feed jsonl to memory ingest/dock
 //   await capture.speak('This is Maya, your neighbour.');      // Argmax TTSKit, macOS `say` fallback
+//   capture.startRecording({ translate: true });               // + live {type:'translation',…} events via onEvent
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -103,12 +104,14 @@ export class CaptureBridge {
 
   /** Record a conversation. Resolves with {session, jsonl, audio, utterances, speakers} after stopRecording(). */
   /** `simulate`: path to a WAV played in as the mic (testing); recording stops at its end. */
-  async startRecording({ session, place, live, simulate, outDir, audioDir } = {}) {
+  /** `translate`: multilingual Whisper. Emits live {type:'translation', language, text, translation, start, end, seq}
+   *  events for foreign speech while recording, and adds `language` + `translation` to the session file. */
+  async startRecording({ session, place, live, simulate, translate, outDir, audioDir } = {}) {
     if (this.recordingId) throw new Error('Already recording.');
     this.recordingId = -1; // reserve while models load
     try {
       await this.whenReady();
-      const { id, promise } = this.request({ cmd: 'record-start', session, place, live, simulate: simulate && path.resolve(simulate),
+      const { id, promise } = this.request({ cmd: 'record-start', session, place, live, translate, simulate: simulate && path.resolve(simulate),
         outDir: outDir && path.resolve(outDir), audioDir: audioDir && path.resolve(audioDir) });
       this.recordingId = id;
       if (this.stopRequested) { this.stopRequested = false; this.send({ cmd: 'record-stop' }); }
@@ -125,10 +128,10 @@ export class CaptureBridge {
 
   cancelRecording() { if (this.recordingId) this.send({ cmd: 'record-cancel' }); }
 
-  /** Transcribe + diarize an existing WAV into contract JSONL. */
-  async processFile(audio, { session, place } = {}) {
+  /** Transcribe + diarize an existing WAV into contract JSONL. `translate`: add `language` + English `translation`. */
+  async processFile(audio, { session, place, translate } = {}) {
     await this.whenReady();
-    return this.request({ cmd: 'process', audio: path.resolve(audio), session, place }).promise;
+    return this.request({ cmd: 'process', audio: path.resolve(audio), session, place, translate }).promise;
   }
 
   /** Speak a whisper line. Argmax TTSKit when loaded, macOS voice otherwise. Resolves when done. */
