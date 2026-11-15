@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isRunPhrase, spokenTimes, spokenDate, spokenDetails, spokenLength } from '../voice-run.mjs';
+import { isRunPhrase, spokenTimes, spokenDate, spokenDetails, spokenLength, spokenCount } from '../voice-run.mjs';
 
 test('only real "run" phrases start a run', () => {
   for (const phrase of ['run', 'Run it', 'hey Pebble, run', 'please run', 'do it', 'add it to my calendar', 'put it in reminders']) {
@@ -47,4 +47,15 @@ test('an event length is only used when it was said', () => {
     spokenDetails('run tomorrow at 9 am for 90 minutes', { target: 'calendar' }),
     { date: '2026-11-16', time: '09:00', durationMinutes: 90 },
   );
+});
+
+test('a repeat count is taken from what was said, never assumed', () => {
+  assert.equal(spokenCount('run today at 8, 2 and 8 for five days'), 5);
+  assert.equal(spokenCount('run for thirty days'), 30);
+  assert.equal(spokenCount('run for two weeks'), 14);
+  assert.equal(spokenCount('run at eight'), null);
+  const dose = spokenDetails('run today at 8, 2 pm and 8 pm for five days', { target: 'reminders', repeat: 'daily', timesPerDay: 3 });
+  assert.deepEqual(dose.times, ['08:00', '14:00', '20:00']);
+  assert.equal(dose.occurrences, 5);
+  assert.equal(dose.date, new Date().toISOString().slice(0, 10));
 });

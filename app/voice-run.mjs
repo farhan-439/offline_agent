@@ -66,6 +66,18 @@ export function spokenLength(text) {
   return w ? words[w[1].replace(/\s+/g, '')] ?? null : null;
 }
 
+/** "for five days", "for two weeks" — how many repeats, if the owner said it. */
+export function spokenCount(text) {
+  const s = String(text ?? '').toLowerCase();
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, ten: 10, fourteen: 14, twenty: 20, thirty: 30, sixty: 60, ninety: 90 };
+  const m = s.match(/\bfor (one|two|three|four|five|six|seven|ten|fourteen|twenty|thirty|sixty|ninety|\d{1,3})\s+(days?|weeks?)\b/);
+  if (!m) return null;
+  const n = words[m[1]] ?? Number(m[1]);
+  if (!n) return null;
+  const total = m[2].startsWith('week') ? n * 7 : n;
+  return total >= 1 && total <= 366 ? total : null;
+}
+
 /** What the owner said, applied on top of a draft — never anything they did not say. */
 export function spokenDetails(text, draft = {}) {
   const times = spokenTimes(text);
@@ -74,6 +86,10 @@ export function spokenDetails(text, draft = {}) {
   if (date) out.date = date;
   const length = spokenLength(text);
   if (length && draft.target === 'calendar') out.durationMinutes = length;
+  if (draft.target === 'reminders' && draft.repeat && draft.repeat !== 'none') {
+    const count = spokenCount(text);
+    if (count) out.occurrences = count;
+  }
   if (!times.length) return out;
   if (draft.target === 'reminders' && Number(draft.timesPerDay || 1) > 1) out.times = times.slice(0, 8);
   else out.time = times[0];
