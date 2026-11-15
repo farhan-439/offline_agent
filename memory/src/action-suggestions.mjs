@@ -47,13 +47,25 @@ function rowFor(db, row) {
     FROM facts f LEFT JOIN people p ON p.id = f.person_id WHERE f.rowid = ?`).get(Number(row.fact_ref.slice(1)));
   return { id: row.id, target: row.target, payload: parse(row.payload, {}), status: row.status,
     createdAt: row.created_at, appliedAt: row.applied_at, externalId: row.external_id,
+    observedAt: f?.observed_at ?? null,
     source: f ? toMemory(db, f) : null };
 }
 
 export function actionSuggestions(db) {
-  return db.prepare(`SELECT * FROM action_suggestions ORDER BY
-    CASE status WHEN 'proposed' THEN 0 WHEN 'exporting' THEN 1 ELSE 2 END, id DESC`).all()
-    .map((row) => rowFor(db, row));
+  // To review first: still-proposed drafts, a real schedule before a one-off, then the newest
+  // memory. The action just earned from today's conversation is what the owner wants to see.
+  const statusRank = (s) => (s.status === 'proposed' ? 0 : s.status === 'exporting' ? 1 : 2);
+  const scheduleRank = (s) => {
+    const p = s.payload || {};
+    const scheduled = (p.repeat && p.repeat !== 'none') || Number(p.timesPerDay || 1) > 1;
+    return scheduled ? 0 : 1;
+  };
+  return db.prepare('SELECT * FROM action_suggestions').all()
+    .map((row) => rowFor(db, row))
+    .sort((a, b) => statusRank(a) - statusRank(b)
+      || scheduleRank(a) - scheduleRank(b)
+      || String(b.observedAt ?? '').localeCompare(String(a.observedAt ?? ''))
+      || b.id - a.id);
 }
 
 /** Scan at most eight unexamined facts per click; no Apple app is touched here. */
@@ -63,6 +75,11 @@ export async function scanActionSuggestions(db, bonsai, { limit = 8 } = {}) {
     LEFT JOIN people p ON p.id = f.person_id
     WHERE f.status = 'active' AND NOT EXISTS (SELECT 1 FROM action_scans s WHERE s.fact_ref = 'F' || f.rowid)
     ORDER BY f.observed_at DESC, f.rowid DESC LIMIT ?`).all(Math.max(1, Math.min(8, Number(limit) || 8)));
+  // One draft per idea: the same advice often comes back from several facts, and a board
+  // with three "Morning Walk" rows is noise the owner has to clear by hand.
+  const key = (target, title) => `${target}|${String(title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`;
+  const seen = new Set(actionSuggestions(db).filter((s) => s.status !== 'added').map((s) => key(s.target, s.payload.title)));
+
   let added = 0;
   for (const f of facts) {
     const ref = `F${f.rowid}`;
@@ -89,6 +106,12 @@ place, person, or relationship. Keep the title short. The app will ask the owner
         timesPerDay: a.target === 'reminders' ? schedule.timesPerDay : 1,
         duration: a.target === 'reminders' ? schedule.duration : null,
         person: f.person_name || null, sourceRef: ref };
+      // A calendar draft with no date and no time can only be finished by guessing, so it is
+      // not offered. (Reviewing it would also fail: Calendar needs a date and a start time.)
+      if (a.target === 'calendar' && !payload.date && !payload.time) continue;
+      const id = key(a.target, payload.title);
+      if (seen.has(id)) continue;
+      seen.add(id);
       const result = db.prepare(`INSERT OR IGNORE INTO action_suggestions (fact_ref, target, payload, created_at)
         VALUES (?, ?, ?, ?)`).run(ref, a.target, json(payload), now());
       added += Number(result.changes || 0);
