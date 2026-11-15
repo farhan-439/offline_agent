@@ -1,5 +1,5 @@
-// Pebble's main window: the stone that records, the conversation, and the memory layers.
-import { recordButtonState, enrollButtonState, dockSummary, formatClipTime } from './view.mjs';
+// Pebble's main window: the stone that records, the conversation, and the memory workspace.
+import { recordButtonState, enrollButtonState, dockSummary, formatClipTime, languageName } from './view.mjs';
 import { markSVG, mountMark } from './mark.mjs';
 
 const api = window.kindred;
@@ -17,8 +17,22 @@ let mode = 'record';           // 'record' | 'ask' | 'translate' — what the st
 let ownerVoiceKnown = false;
 let pendingTurn = null;
 let lastAnswer = '';
-let memories = [];
+
+// memory workspace
 let people = [];
+let relations = [];
+let memories = [];
+let inputs = [];
+let traces = [];
+let selectedPerson = null;
+let selectedMemory = null;
+let layer = 'facts';
+let search = '';
+
+// live transcript
+const liveRows = new Map();    // seq (or reply index) → row
+let liveSession = null;
+let liveState = 'idle';
 
 // ---------- navigation ----------
 function show(view) {
@@ -46,26 +60,43 @@ function setMode(next) {
 }
 for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => setMode(b.dataset.mode));
 
-function capturing(rec = {}) {
-  return rec.phase === 'starting' || rec.phase === 'recording';
+function capturing(rec = {}) { return rec.phase === 'starting' || rec.phase === 'recording'; }
+
+function clock(rec) {
+  if (!rec.startedAt) return '';
+  const s = Math.max(0, Math.floor((Date.now() - rec.startedAt) / 1000));
+  return ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function renderMode() {
   const rec = snap?.recording || {};
   const busy = ['starting', 'recording', 'processing'].includes(rec.phase) && rec.mode !== 'enroll';
+  // A recording started anywhere (orb, shortcut) owns the switch while it runs.
+  const shown = busy ? (rec.mode === 'translate' ? 'translate' : 'record') : mode;
   const translating = rec.mode === 'translate' && busy;
-  const t = rec.startedAt ? ` · ${Math.floor((Date.now() - rec.startedAt) / 60000)}:${String(Math.floor((Date.now() - rec.startedAt) / 1000) % 60).padStart(2, '0')}` : '';
 
   const line = $('#mode-line');
-  if (mode === 'ask') line.textContent = 'Type a question, or speak it';
-  else if (mode === 'translate') line.textContent = translating ? `Translating${t}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
-  else line.textContent = capturing(rec) ? `Recording${t}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to record';
+  if (shown === 'ask') line.textContent = 'Type a question, or speak it';
+  else if (shown === 'translate') line.textContent = translating ? `Translating${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
+  else line.textContent = capturing(rec) ? `Recording${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to record';
 
   const enrolling = rec.mode === 'enroll' && rec.phase !== 'idle';
   $('#record-btn').disabled = rec.phase === 'processing' || enrolling;
   $('#record-btn').setAttribute('aria-pressed', String(capturing(rec)));
   $('#record-btn').classList.toggle('is-speaking', ['starting', 'recording', 'processing'].includes(rec.phase));
-  for (const b of document.querySelectorAll('.mode')) b.disabled = busy;
+
+  // While the microphone is busy the other modes are unavailable — say why, don't just grey out.
+  for (const b of document.querySelectorAll('.mode')) {
+    b.setAttribute('aria-selected', String(b.dataset.mode === shown));
+    b.disabled = busy || enrolling;
+  }
+  $('#mode-busy').dataset.mode = shown;
+  const busyLine = $('#mode-busy');
+  busyLine.hidden = !(busy || enrolling);
+  busyLine.textContent = enrolling ? 'Learning your voice — finish that first.'
+    : rec.phase === 'processing' ? 'Saving this conversation…'
+    : translating ? 'Translating — tap the stone to stop.'
+    : 'Recording — tap the stone to stop.';
 }
 
 $('#record-btn').addEventListener('click', async () => {
@@ -88,11 +119,11 @@ function render(next) {
   $('#status').dataset.ok = String(!!memory.ok);
   $('#status-text').textContent = memory.ok ? 'Local' : 'Memory offline';
 
-  const enrolling = recording.mode === 'enroll' && recording.phase !== 'idle';
   app.dataset.phase = recording.phase;
   document.title = capturing(recording) ? '● Recording — Pebble' : 'Pebble';
   renderMode();
   renderEnroll(recording, capture);
+  renderLive(recording);
 
   if (next.whisper && capturing(recording)) {
     $('#whisper').hidden = false;
@@ -108,11 +139,64 @@ $('#status').addEventListener('click', () => api.checkMemory());
 setInterval(() => { if (snap && capturing(snap.recording)) renderMode(); }, 1000);
 
 function result(text) { $('#record-result').hidden = !text; $('#record-result').textContent = text; }
-api.onRecordingDone((r) => {
-  if (!r.ok) { if (!r.cancelled) result(r.error); return; }
-  const saved = `Saved ${r.utterances} ${r.utterances === 1 ? 'line' : 'lines'} from ${r.speakers} ${r.speakers === 1 ? 'voice' : 'voices'}.`;
-  result(r.ingested ? `${saved} Memory has it.` : `${saved} Not in memory yet: ${r.ingestError}`);
-});
+
+// ---------- live transcript (Translate) ----------
+function renderLive(rec) {
+  const translating = rec.mode === 'translate';
+  if (!translating && liveRows.size === 0) { $('#live-panel').hidden = true; return; }
+
+  // A new session starts clean; the last session stays visible after Stop.
+  if (rec.session && rec.session !== liveSession) {
+    liveSession = rec.session;
+    liveRows.clear();
+    liveState = 'idle';
+  }
+  if (translating) {
+    for (const t of rec.translations || []) {
+      if (t.seq == null) continue;
+      liveRows.set(`t${t.seq}`, { kind: 'heard', language: t.language, text: t.text, translation: t.translation });
+    }
+    for (const [i, r] of (rec.replies || []).entries()) {
+      liveRows.set(`r${i}`, { kind: 'reply', english: r.english, translated: r.translated, language: r.language });
+    }
+    liveState = rec.phase === 'processing' ? 'saving'
+      : rec.reply?.phase === 'listening' ? 'listening'
+      : rec.reply?.phase === 'speaking' ? 'speaking'
+      : rec.phase === 'recording' ? 'translating' : 'starting';
+  } else if (rec.phase === 'idle') {
+    liveState = 'stopped';
+  }
+
+  const panel = $('#live-panel');
+  panel.hidden = false;
+  const stateEl = $('#live-state');
+  stateEl.textContent = { translating: 'Translating', listening: 'Listening to you', speaking: 'Speaking your reply', saving: 'Saving', starting: 'Starting', stopped: 'Saved', idle: 'Ready' }[liveState] || 'Live';
+  $('#live-meta').textContent = rec.session ? `${liveRows.size} ${liveRows.size === 1 ? 'line' : 'lines'}` : '';
+
+  const list = $('#live-list');
+  const rows = [...liveRows.values()].slice(-40);
+  if (!rows.length) {
+    list.replaceChildren(Object.assign(document.createElement('p'), { className: 't-empty', textContent: 'Nothing translated yet. Speak, and each line appears here.' }));
+    return;
+  }
+  list.replaceChildren(...rows.map((r) => {
+    const li = document.createElement('li');
+    li.className = 'trow';
+    if (r.kind === 'reply') {
+      const you = document.createElement('span'); you.className = 't-you'; you.textContent = 'You replied';
+      const orig = document.createElement('span'); orig.className = 't-orig'; orig.textContent = `“${r.english || ''}”`;
+      const said = document.createElement('span'); said.className = 't-eng'; said.textContent = r.translated || '';
+      li.append(you, orig, said);
+    } else {
+      const orig = document.createElement('span'); orig.className = 't-orig';
+      orig.textContent = `${languageName(r.language)}: “${r.text || ''}”`;
+      const eng = document.createElement('span'); eng.className = 't-eng'; eng.textContent = r.translation || r.text || '';
+      li.append(orig, eng);
+    }
+    return li;
+  }));
+  list.scrollTop = list.scrollHeight;
+}
 
 // ---------- your voice ----------
 function renderEnroll(recording, capture) {
@@ -134,28 +218,8 @@ api.onEnrollDone((r) => {
   loadMemory();
 });
 
-// ---------- people + dock ----------
+// ---------- dock ----------
 function dockStatus(text) { $('#dock-status').hidden = !text; $('#dock-status').textContent = text; }
-
-function renderPeople(list) {
-  people = list || [];
-  ownerVoiceKnown = people.some((p) => p.owner && p.voiceSamples > 0);
-  if (snap) renderEnroll(snap.recording, snap.capture);
-  const peopleList = $('#people');
-  if (!peopleList) return;   // the board is the memory view now; the list is optional
-  peopleList.replaceChildren(...people.map((p) => {
-    const li = document.createElement('li'); li.className = 'person';
-    const h = document.createElement('h3'); h.textContent = p.name;
-    const rel = document.createElement('p'); rel.className = 'relation';
-    rel.textContent = p.owner ? 'You' : (p.relation || 'Someone you met');
-    const core = document.createElement('p'); core.className = 'core';
-    core.textContent = p.core || 'Nothing remembered yet.';
-    const stats = document.createElement('p'); stats.className = 'stats';
-    stats.textContent = `${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}${p.voiceSamples ? ' · voice known' : ''}`;
-    li.append(h, rel, core, stats);
-    return li;
-  }));
-}
 $('#dock-btn').addEventListener('click', async () => {
   const btn = $('#dock-btn');
   btn.disabled = true; btn.textContent = 'Docking…';
@@ -164,103 +228,285 @@ $('#dock-btn').addEventListener('click', async () => {
     const r = await api.dock();
     if (!r.ok) { dockStatus(r.error); return; }
     dockStatus(dockSummary(r.value.report));
-    renderPeople(r.value.people || []);
     await loadMemory();
   } finally { btn.disabled = false; btn.textContent = 'Dock today'; }
 });
 
-// ---------- memory: the layers ----------
+api.onRecordingDone((r) => {
+  if (!r.ok) { if (!r.cancelled) result(r.error); return; }
+  const saved = `Saved ${r.utterances} ${r.utterances === 1 ? 'line' : 'lines'} from ${r.speakers} ${r.speakers === 1 ? 'voice' : 'voices'}.`;
+  result(r.ingested ? `${saved} Memory has it.` : `${saved} Not in memory yet: ${r.ingestError}`);
+});
+
+// ---------- memory workspace ----------
 async function loadMemory() {
-  const [m, p] = await Promise.all([api.memories(), api.people()]);
-  if (p.ok) renderPeople(p.value.people || []);
-  if (!m.ok) { $('#mem-summary').textContent = m.error || 'Memory is not running.'; return; }
-  memories = m.value.memories || [];
-  $('#mem-summary').textContent = memories.length
-    ? `${memories.length} ${memories.length === 1 ? 'fact' : 'facts'} · ${people.length} ${people.length === 1 ? 'person' : 'people'} · 4 layers`
-    : 'Nothing stored yet.';
-  drawStrata();
+  const [p, m, i, t] = await Promise.all([api.people(), api.memories(), api.inputs(), api.traces()]);
+  if (p.ok) { people = p.value.people || []; relations = p.value.relations || []; }
+  if (m.ok) memories = m.value.memories || [];
+  if (i.ok) inputs = i.value.inputs || [];
+  if (t.ok) traces = t.value.traces || [];
+  ownerVoiceKnown = people.some((x) => x.owner && x.voiceSamples > 0);
+  if (snap) renderEnroll(snap.recording, snap.capture);
+
+  const failed = [p, m, i, t].find((r) => !r.ok);
+  $('#mem-summary').textContent = failed
+    ? (failed.error || 'Memory is not running.')
+    : `${memories.length} facts · ${inputs.length} inputs · ${people.length} people · ${traces.length} recalls`;
+
+  fillFilters();
+  renderPeople();
+  renderLayers();
+  renderRecall();
+  renderDetail();
 }
 
-function drawStrata() {
-  const box = $('#strata');
-  box.replaceChildren();
-  $('#strata-empty').hidden = memories.length > 0;
-  if (!memories.length) return;
+const relationOf = (p) => (p.relation && p.relation !== 'device owner' ? p.relation : null)
+  || (relations.find((r) => (r.a === p.id || r.b === p.id))?.label) || null;
 
-  // One column per person: the cluster is the connection.
-  const groups = new Map();
-  for (const m of memories) {
-    const key = m.person?.id ?? '_none';
-    if (!groups.has(key)) groups.set(key, { name: m.person?.name ?? 'Unsorted', core: null, facts: [] });
-    groups.get(key).facts.push(m);
+function fillFilters() {
+  const ps = $('#layer-person');
+  const keep = ps.value;
+  ps.replaceChildren(new Option('All people', ''));
+  for (const p of people) ps.append(new Option(p.name, p.id));
+  ps.value = people.some((p) => p.id === keep) ? keep : (selectedPerson || '');
+
+  const kinds = [...new Set(memories.map((m) => m.kind).filter(Boolean))].sort();
+  const ks = $('#layer-kind');
+  const keepKind = ks.value;
+  ks.replaceChildren(new Option('All types', ''));
+  for (const k of kinds) ks.append(new Option(k, k));
+  ks.value = kinds.includes(keepKind) ? keepKind : '';
+}
+
+function renderPeople() {
+  const list = $('#people-list');
+  const rel = (p) => ((p.owner ?? !!p.is_owner) ? 'You' : relationOf(p) || 'Relation unknown');
+  list.replaceChildren(...people.map((p) => {
+    const li = document.createElement('li');
+    const isOwner = p.owner ?? !!p.is_owner;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'prow';
+    b.setAttribute('aria-pressed', String(selectedPerson === p.id));
+    b.setAttribute('aria-label', `${p.name}, ${isOwner ? 'you' : rel(p)}, ${p.facts} facts${p.voiceSamples ? ', voice known' : ''}`);
+
+    const av = document.createElement('span'); av.className = 'avatar'; av.textContent = initials(p.name);
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name;
+    const dot = document.createElement('span'); dot.className = 'voice-dot';
+    dot.dataset.known = String(!!p.voiceSamples);
+    dot.title = p.voiceSamples ? 'Voice known' : 'Voice not known yet';
+    const relEl = document.createElement('span'); relEl.className = 'prel';
+    relEl.textContent = `${rel(p)} · ${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`;
+    const core = document.createElement('span'); core.className = 'pcore';
+    core.textContent = p.core || 'No core memory yet.';
+
+    b.append(av, name, dot, relEl, core);
+    b.addEventListener('click', () => {
+      selectedPerson = selectedPerson === p.id ? null : p.id;
+      $('#layer-person').value = selectedPerson || '';
+      renderPeople(); renderLayers();
+    });
+    li.append(b);
+    list.append(li);
+    return li;
+  }));
+  $('#people-count').textContent = `${people.length}`;
+}
+
+function initials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('');
+}
+
+function currentRows() {
+  const q = search.trim().toLowerCase();
+  const pid = $('#layer-person').value;
+  const kind = $('#layer-kind').value;
+  const has = (s) => !q || String(s || '').toLowerCase().includes(q);
+
+  if (layer === 'inputs') {
+    return inputs.filter((x) => has(x.text)).map((x) => ({
+      key: x.id, text: x.text, meta: `input ${x.id} · ${dateOnly(x.createdAt)}`, memory: null, person: null,
+    }));
   }
-  for (const p of people) if (groups.has(p.id) && p.core) groups.get(p.id).core = p.core;
-
-  const cols = [...groups.values()].sort((a, b) => b.facts.length - a.facts.length || a.name.localeCompare(b.name));
-  const board = document.createElement('div');
-  board.className = 'board';
-
-  const card = (tag, text, extra = '') => {
-    const b = document.createElement('div');
-    b.className = `mcard ${extra}`.trim();
-    const t = document.createElement('span'); t.className = 'tag'; t.textContent = tag;
-    const f = document.createElement('span'); f.className = 'fact'; f.textContent = text;
-    b.append(t, f);
-    return b;
-  };
-
-  for (const g of cols) {
-    const col = document.createElement('section');
-    col.className = 'mcol';
-
-    const head = document.createElement('header');
-    const who = document.createElement('span'); who.className = 'who'; who.textContent = g.name;
-    const n = document.createElement('span'); n.className = 'n';
-    n.textContent = `${g.facts.length} ${g.facts.length === 1 ? 'fact' : 'facts'}`;
-    head.append(who, n);
-    col.append(head);
-
-    // L3 — the core card, when this person has one.
-    if (g.core) col.append(card('L3 · CORE', g.core, 'core'));
-
-    for (const m of g.facts) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'mcard';
-      const tag = document.createElement('span'); tag.className = 'tag';
-      tag.textContent = `L1 · ${(m.kind || 'fact').toUpperCase()}`;
-      const fact = document.createElement('span'); fact.className = 'fact'; fact.textContent = m.text;
-      b.append(tag, fact);
-      // L0 — the words it was heard in.
-      if (m.source?.quote?.text) {
-        const q = document.createElement('span'); q.className = 'quote';
-        q.textContent = `L0 · “${m.source.quote.text}”`;
-        b.append(q);
-      }
-      b.addEventListener('click', () => selectMemory(m));
-      col.append(b);
-    }
-    board.append(col);
+  if (layer === 'core') {
+    return people.filter((p) => p.core && (!pid || p.id === pid) && has(p.core)).map((p) => ({
+      key: p.id, text: p.core, meta: `${p.name} · ${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`, memory: null, person: p.id,
+    }));
   }
-  box.append(board);
+  // facts and evidence come from /memories
+  return memories
+    .filter((m) => (!pid || m.person?.id === pid) && (!kind || m.kind === kind))
+    .filter((m) => (layer === 'evidence' ? has(m.source?.quote?.text) : has(m.text)))
+    .map((m) => ({
+      key: m.ref,
+      text: layer === 'evidence' ? `“${m.source?.quote?.text || ''}”` : m.text,
+      meta: [m.person?.name || 'Unsorted', m.kind || 'fact', dateOnly(m.createdAt)].filter(Boolean).join(' · '),
+      memory: m,
+      person: m.person?.id || null,
+    }));
+}
+
+function renderLayers() {
+  for (const tab of document.querySelectorAll('.ltab')) tab.setAttribute('aria-selected', String(tab.dataset.layer === layer));
+  const rows = currentRows();
+  $('#layer-count').textContent = `${rows.length}`;
+  const list = $('#layer-list');
+  if (!rows.length) {
+    list.replaceChildren(Object.assign(document.createElement('p'), {
+      className: 'hint', textContent: search ? 'Nothing matches that search.' : 'Nothing in this layer yet.',
+    }));
+    return;
+  }
+  list.replaceChildren(...rows.map((r) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lrow';
+    b.setAttribute('aria-pressed', String(!!selectedMemory && r.memory?.ref === selectedMemory.ref));
+    const t = document.createElement('span'); t.className = 'ltext'; t.textContent = r.text;
+    const m = document.createElement('span'); m.className = 'lmeta'; m.textContent = r.meta;
+    b.append(t, m);
+    b.addEventListener('click', () => {
+      if (r.memory) selectMemory(r.memory);
+      else if (r.person) { selectedPerson = r.person; $('#layer-person').value = r.person; renderPeople(); renderLayers(); }
+    });
+    li.append(b);
+    list.append(li);
+    return li;
+  }));
 }
 
 function selectMemory(m) {
+  selectedMemory = m;
+  renderLayers();
+  renderDetail();
+}
+
+function renderDetail() {
   const box = $('#memory-detail');
   box.replaceChildren();
-  box.hidden = false;
+  const m = selectedMemory;
+  if (!m) {
+    $('#detail-ref').textContent = '';
+    const p = people.find((x) => x.id === selectedPerson);
+    if (p) {
+      // A selected person, no memory yet: show their card rather than an empty panel.
+      const h = document.createElement('h3'); h.textContent = p.name;
+      const chips = document.createElement('div'); chips.className = 'chips';
+      for (const label of [(p.owner ?? !!p.is_owner) ? 'You' : relationOf(p) || 'Relation unknown',
+        `${p.facts} ${p.facts === 1 ? 'fact' : 'facts'}`, p.voiceSamples ? 'voice known' : 'no voice sample']) {
+        const c = document.createElement('span'); c.className = 'chip2'; c.textContent = label; chips.append(c);
+      }
+      const core = document.createElement('p'); core.className = 'q';
+      core.textContent = p.core || 'No core memory card yet. Dock a conversation to build one.';
+      box.append(h, chips, core);
+      box.append(Object.assign(document.createElement('p'), {
+        className: 'hint', textContent: 'Pick a memory from the layers to see its source and evidence.',
+      }));
+      return;
+    }
+    box.append(Object.assign(document.createElement('p'), {
+      className: 'hint', textContent: 'Pick a memory from the layers to see its source, date and evidence.',
+    }));
+    return;
+  }
+  $('#detail-ref').textContent = m.ref || '';
+
   const h = document.createElement('h3'); h.textContent = m.text;
-  const quote = document.createElement('p'); quote.className = 'quote';
-  quote.textContent = m.source?.quote?.text ? `“${m.source.quote.text}”` : 'No spoken source saved.';
-  const meta = document.createElement('div'); meta.className = 'meta';
-  meta.textContent = [
-    m.person?.name ?? 'Unsorted',
-    m.kind || 'fact',
-    m.uses ? `${m.uses} ${m.uses === 1 ? 'use' : 'uses'}` : 'not used yet',
-    (m.createdAt || '').slice(0, 10),
-  ].join(' · ');
-  box.append(h, quote, meta);
+  const chips = document.createElement('div'); chips.className = 'chips';
+  for (const label of [m.person?.name || 'Unsorted', m.kind, m.origin === 'declared' ? 'you declared it' : 'extracted']) {
+    if (!label) continue;
+    const c = document.createElement('span'); c.className = 'chip2'; c.textContent = label;
+    chips.append(c);
+  }
+
+  const dl = document.createElement('dl'); dl.className = 'kv';
+  const add = (k, v) => {
+    if (!v) return;
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    dl.append(dt, dd);
+  };
+  add('Saved', dateOnly(m.createdAt));
+  add('Scope', m.scope);
+  add('Used', m.uses ? `${m.uses} ${m.uses === 1 ? 'time' : 'times'}` : 'never');
+  add('Evidence', m.source?.session ? `session ${m.source.session}` : 'none');
+
+  box.append(h, chips, dl);
+
+  if (m.source?.quote?.text) {
+    const q = document.createElement('p'); q.className = 'q';
+    q.textContent = `“${m.source.quote.text}”`;
+    box.append(q);
+  } else {
+    const q = document.createElement('p'); q.className = 'hint';
+    q.textContent = 'No spoken quote was saved for this fact.';
+    box.append(q);
+  }
+
+  if (m.source?.quote?.audioUrl) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'play'; b.textContent = 'Play the moment';
+    b.addEventListener('click', () => {
+      const started = Number(m.source.quote.start);
+      const ended = Number(m.source.quote.end);
+      play({ url: m.source.quote.audioUrl, start: Number.isFinite(started) ? started : null, end: Number.isFinite(ended) ? ended : null });
+    });
+    box.append(b);
+  }
 }
+
+function renderRecall() {
+  const list = $('#recall-list');
+  $('#recall-count').textContent = `${traces.length}`;
+  if (!traces.length) {
+    list.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No questions asked yet.' }));
+    return;
+  }
+  list.replaceChildren(...traces.map((t) => {
+    const li = document.createElement('li'); li.className = 'rrow';
+    const q = document.createElement('p'); q.className = 'rq'; q.textContent = t.question;
+    const a = document.createElement('p'); a.className = 'ra'; a.textContent = t.answer || '';
+    const meta = document.createElement('div'); meta.className = 'rmeta';
+
+    const grounded = !!t.grounded;
+    const pill = document.createElement('span');
+    pill.className = `pill ${grounded ? 'ok' : 'warn'}`;
+    pill.textContent = grounded ? 'verified' : 'no source';
+    meta.append(pill);
+
+    const n = sourceCount(t);
+    if (grounded && n) {
+      const c = document.createElement('span'); c.textContent = `${n} ${n === 1 ? 'source' : 'sources'}`;
+      meta.append(c);
+    }
+    meta.append(Object.assign(document.createElement('span'), { textContent: t.mode || 'retrieval' }));
+    if (t.created_at) meta.append(Object.assign(document.createElement('span'), { textContent: dateOnly(t.created_at) }));
+
+    li.append(q, a, meta);
+    return li;
+  }));
+}
+
+/** How many distinct citations the retrieval steps produced (0 when it answered ungrounded). */
+function sourceCount(trace) {
+  const cited = new Set();
+  const loaded = new Set();
+  for (const step of trace.trace || []) {
+    for (const c of step.cite || []) cited.add(c);
+    for (const l of step.loaded || []) loaded.add(l);
+  }
+  return (cited.size ? cited : loaded).size;
+}
+
+const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : '');
+
+for (const tab of document.querySelectorAll('.ltab')) {
+  tab.addEventListener('click', () => { layer = tab.dataset.layer; renderLayers(); });
+}
+$('#layer-search').addEventListener('input', (e) => { search = e.target.value; renderLayers(); });
+$('#layer-person').addEventListener('change', (e) => { selectedPerson = e.target.value || null; renderPeople(); renderLayers(); });
+$('#layer-kind').addEventListener('change', () => renderLayers());
 
 // ---------- conversation ----------
 function addTurn(kind, text) {
@@ -290,7 +536,12 @@ function addTurn(kind, text) {
 const player = $('#player');
 let stopAt = null;
 player.addEventListener('timeupdate', () => { if (stopAt !== null && player.currentTime >= stopAt) { player.pause(); stopAt = null; } });
-function play(clip) { player.src = clip.url; stopAt = clip.end; player.play().catch(() => {}); }
+function play(clip) {
+  player.src = clip.url;
+  stopAt = Number.isFinite(clip.end) ? clip.end : null;
+  if (Number.isFinite(clip.start)) player.currentTime = clip.start;
+  player.play().catch(() => {});
+}
 
 function detailsFor(answer) {
   const wrap = document.createElement('div');

@@ -239,6 +239,24 @@ test('intent: a tap hears the words, and does not answer them on its own', async
   app.close(); await mem.close();
 });
 
+test('inputs and traces: the layers and recall panels read memory directly', async () => {
+  const mem = await fakeMemory({
+    'GET /inputs': () => ({ inputs: [{ id: 'N1', text: 'Met Maya by the bins.', createdAt: '2026-11-15T03:55:23Z' }] }),
+    'GET /traces': () => ({ traces: [{ id: 7, question: 'What did Maya ask?', answer: 'Water the tomatoes.', mode: 'bm25', grounded: 1, trace: [{ cite: ['F1'] }] }] }),
+  });
+  const { app } = makeApp(mem.url);
+  await app.start();
+  const { inputs } = await app.inputs();
+  const { traces } = await app.traces();
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].id, 'N1');
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].grounded, 1);
+  assert.ok(mem.calls.some((c) => c.route.startsWith('GET /inputs')), 'reads saved inputs');
+  assert.ok(mem.calls.some((c) => c.route.startsWith('GET /traces')), 'reads recall traces');
+  app.close(); await mem.close();
+});
+
 test('memories: the layered map reads facts, people and their spoken source', async () => {
   const mem = await fakeMemory();
   const { app } = makeApp(mem.url);

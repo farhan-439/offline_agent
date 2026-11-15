@@ -427,7 +427,29 @@ export class KindredApp {
     if (q) params.set('q', q);
     if (person) params.set('person', person);
     const r = await this.request(`/memories?${params}`, { method: 'GET' });
-    return { memories: r.memories || [] };
+    return { memories: (r.memories || []).map((m) => this.withEvidence(m)) };
+  }
+
+  /** Saved inputs (L0): what memory was actually given, in its own words. */
+  async inputs({ limit = 200 } = {}) {
+    const r = await this.request(`/inputs?limit=${limit}`, { method: 'GET' });
+    return { inputs: r.inputs || [] };
+  }
+
+  /** Recent recalls: the question, the answer, whether it was grounded, and the steps taken. */
+  async traces({ limit = 20 } = {}) {
+    const r = await this.request(`/traces?limit=${limit}`, { method: 'GET' });
+    return { traces: r.traces || [] };
+  }
+
+  /** Turn a memory's repo-relative quote audio into a playable file:// URL, when the file is still there. */
+  withEvidence(m) {
+    const quote = m.source?.quote;
+    if (!quote) return m;
+    const rel = quote.audio;
+    const file = rel ? (path.isAbsolute(rel) ? rel : path.resolve(this.repoRoot, rel)) : null;
+    const exists = !!file && existsSync(file);
+    return { ...m, source: { ...m.source, quote: { ...quote, audioUrl: exists ? pathToFileURL(file).href : null } } };
   }
 
   async dock() {

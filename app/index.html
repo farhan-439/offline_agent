@@ -22,14 +22,17 @@
 
   <div class="shell">
     <nav class="rail" aria-label="Pebble">
-      <button class="nav" type="button" data-view="capture" aria-label="Capture" title="Capture">
+      <button class="nav" type="button" data-view="capture" aria-label="Capture" aria-current="page">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+        <span class="nav-label">Capture</span>
       </button>
-      <button class="nav" type="button" data-view="chat" aria-label="Chat" title="Chat">
+      <button class="nav" type="button" data-view="chat" aria-label="Chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3V5Z"/></svg>
+        <span class="nav-label">Chat</span>
       </button>
-      <button class="nav" type="button" data-view="memory" aria-label="Memory" title="Memory">
+      <button class="nav" type="button" data-view="memory" aria-label="Memory">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="M3 12.5 12 17l9-4.5M3 17.5 12 22l9-4.5"/></svg>
+        <span class="nav-label">Memory</span>
       </button>
     </nav>
 
@@ -43,10 +46,18 @@
         <p id="mode-line" class="mode-line">Tap to record</p>
 
         <div class="modes" role="tablist" aria-label="What should the stone do?">
-          <button class="mode" type="button" data-mode="record" role="tab" aria-selected="true">Record</button>
-          <button class="mode" type="button" data-mode="ask" role="tab" aria-selected="false">Ask</button>
-          <button class="mode" type="button" data-mode="translate" role="tab" aria-selected="false">Translate</button>
+          <button class="mode" type="button" data-mode="record" role="tab" aria-selected="true">
+            <span class="m-name">Record</span><span class="m-desc">The room, out loud</span>
+          </button>
+          <button class="mode" type="button" data-mode="ask" role="tab" aria-selected="false">
+            <span class="m-name">Ask</span><span class="m-desc">From your memory</span>
+          </button>
+          <button class="mode" type="button" data-mode="translate" role="tab" aria-selected="false">
+            <span class="m-name">Translate</span><span class="m-desc">Their language → English</span>
+          </button>
         </div>
+
+        <p id="mode-busy" class="mode-busy" role="status" hidden></p>
 
         <div id="ask-panel" class="ask-panel" hidden>
           <form id="quick-form" class="composer" autocomplete="off">
@@ -56,6 +67,14 @@
             <button id="quick-send" type="submit" aria-label="Send">↑</button>
           </form>
         </div>
+
+        <section id="live-panel" class="live-panel" aria-label="Live transcript" hidden>
+          <header class="live-head">
+            <span id="live-state" class="live-state">Listening</span>
+            <span id="live-meta" class="fine"></span>
+          </header>
+          <ul id="live-list" class="live-list" aria-live="polite"></ul>
+        </section>
 
         <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
         <p id="record-result" class="fine" role="status" hidden></p>
@@ -79,8 +98,8 @@
         </form>
       </section>
 
-      <!-- ===== Memory: the layers, and how they connect ===== -->
-      <section id="view-memory" class="view page" aria-label="Memory" hidden>
+      <!-- ===== Memory: four areas, each reading a real endpoint ===== -->
+      <section id="view-memory" class="view page memory" aria-label="Memory" hidden>
         <div class="mem-head">
           <div>
             <h1>Memory</h1>
@@ -91,14 +110,40 @@
             <button id="enroll-btn" type="button" class="quiet">My voice</button>
           </div>
         </div>
-
-        <div class="strata-wrap">
-          <div id="strata" class="strata"></div>
-          <p id="strata-empty" class="fine" hidden>Nothing stored yet. Record a conversation, then dock.</p>
-        </div>
-        <div id="memory-detail" class="mem-detail" hidden></div>
-
         <p id="dock-status" class="fine" hidden></p>
+
+        <div class="mem-grid">
+          <section class="panel" aria-labelledby="p-people">
+            <header><h2 id="p-people">People</h2><span id="people-count" class="count"></span></header>
+            <ul id="people-list" class="people-list"></ul>
+          </section>
+
+          <section class="panel" aria-labelledby="p-detail">
+            <header><h2 id="p-detail">Selected memory</h2><span id="detail-ref" class="count"></span></header>
+            <div id="memory-detail" class="mem-detail"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="p-layers">
+            <header><h2 id="p-layers">Memory layers</h2><span id="layer-count" class="count"></span></header>
+            <div class="layer-tabs" role="tablist" aria-label="Layer">
+              <button class="ltab" type="button" data-layer="inputs" role="tab" aria-selected="false">Inputs</button>
+              <button class="ltab" type="button" data-layer="evidence" role="tab" aria-selected="false">Evidence</button>
+              <button class="ltab" type="button" data-layer="facts" role="tab" aria-selected="true">Facts</button>
+              <button class="ltab" type="button" data-layer="core" role="tab" aria-selected="false">Core</button>
+            </div>
+            <div class="layer-filters">
+              <input id="layer-search" type="search" placeholder="Search this layer…" aria-label="Search memory">
+              <select id="layer-person" aria-label="Filter by person"></select>
+              <select id="layer-kind" aria-label="Filter by type"></select>
+            </div>
+            <ul id="layer-list" class="layer-list"></ul>
+          </section>
+
+          <section class="panel" aria-labelledby="p-recall">
+            <header><h2 id="p-recall">Recall activity</h2><span id="recall-count" class="count"></span></header>
+            <ul id="recall-list" class="recall-list"></ul>
+          </section>
+        </div>
       </section>
     </main>
   </div>

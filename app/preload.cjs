@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('kindred', {
   cancelReply: () => ipcRenderer.invoke('reply:cancel'),
   people: () => ipcRenderer.invoke('memory:people'),
   memories: () => ipcRenderer.invoke('memory:memories'),
+  inputs: () => ipcRenderer.invoke('memory:inputs'),
+  traces: () => ipcRenderer.invoke('memory:traces'),
   dock: () => ipcRenderer.invoke('memory:dock'),
   ask: (question) => ipcRenderer.invoke('memory:ask', question),
   startAskListening: () => ipcRenderer.invoke('ask:listen-start'),

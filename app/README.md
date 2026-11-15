@@ -1,13 +1,32 @@
-# app/ — Kindred desktop app (Electron)
+# app/ — Pebble desktop app (Electron)
 
-One hub window with three screens, a floating orb, and a small chat window opened by the orb. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
+One hub window with three screens, a floating mark, and a small chat window opened by the mark. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
 
 | Screen | What it does |
 |---|---|
-| **Record** | One big button. While recording, a red banner, a red pulsing button and `● Recording` in the title make the recording state visible (privacy). Shows the mic in use (`mic-live`), each live voice as it's detected (`speaker`, `final:false`), and who it is once memory recognises it. On stop, the session file is sent to memory `/ingest`. |
-| **People** | "Dock today's conversations" calls memory `/dock`, then lists people from `GET /people`: name, relation and core memory card. |
-| **Ask** | Text box → memory `/ask`. The answer is shown and spoken (Argmax TTSKit, Mac voice as fallback). Cited memory text and photos are shown, and each cited clip has a ▶ Play button for its time range. |
-| **Orb** | The one control for everything. Always-on-top bubble at the bottom of the screen; click it for a menu with three big choices: **Start recording**, **Ask a question** (type, or tap **Talk to Kindred** and speak), **Live translation**. While recording or translating, the card shows the timer, voices heard (with match %) or live translations, and one **Stop** button; the other choices are greyed out with the reason (they share the microphone). The orb stays an orb: recording adds a thin red ring and a pulsing red dot, translating a cyan ring and a 文A badge. Whispers ("This is Dr. Patel…") appear on the card over any view. Right-click for a menu. |
+| **Capture** (main page) ⬅ the stone | The mark is the button. A switch above it sets what a tap does — **Record** (the room, out loud), **Ask** (type or speak a question), **Translate** (their language → English). Labels say which one is running and why the others are unavailable while the microphone is busy. On stop, the session file is sent to memory `/ingest`. |
+| **Chat** | Questions and answers from memory `/ask`. Answers are spoken (Argmax TTSKit, Mac voice fallback) and carry a **N sources** chip that expands to the cited memories and their audio. |
+| **Memory** | Four areas, all reading real endpoints — see below. Keeps **Dock today** and **My voice**. |
+| **The mark** | Always-on-top at the bottom of the screen. Tap it and it listens, then routes what you said to Record, Translate or Ask; the three choices stay available as sub-buttons. Recording adds a clay ring, translating a slate ring and a 文A badge. Whispers ("This is Dr. Patel…") appear on the card over any view. Right-click for a menu. |
+
+## Capture: the three modes and the live transcript
+
+The switch is the only place that decides what the stone does, and it also reports state: `Recording · 0:14`, `Translating · 0:47`, `Saving…`. While the microphone is busy the other modes are disabled **with a line explaining why** ("Recording — tap the stone to stop"). A recording started anywhere — the floating mark, the shortcut — claims the switch until it ends.
+
+In **Translate**, the page shows a live transcript under the stone: each heard line as `French: "…"` with its English underneath, and your own replies as `You replied` in the language Pebble spoke. States are named (`Listening`, `Translating`, `Listening to you`, `Speaking your reply`, `Saving`, `Saved`). Rows are keyed by translation `seq`, so a line that arrives twice with better text **replaces** rather than duplicates, and the last session stays on screen after **Stop** until a new session begins.
+
+**Record** shows only the real recording state. It does not invent a transcript, because capture does not stream text for ordinary recordings.
+
+## Memory workspace (four areas)
+
+| Area | Reads | Shows |
+|---|---|---|
+| **People** (top left) | `GET /people` | Name, relationship, whether the voice is known, fact count, and the person's core memory. Selecting one filters the layers. |
+| **Selected memory** (top right) | the chosen fact | Full text, person, kind, origin (declared vs extracted), date, scope, use count, the original quote, and **Play the moment** when the audio still exists. |
+| **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four selectable layers — **Inputs** (what memory was given), **Evidence** (the spoken quote behind each fact), **Facts** (extracted memories), **Core** (per-person core cards) — with search and person/type filters. |
+| **Recall activity** (bottom right) | `GET /traces` | Recent questions, the answer, retrieval mode, date, and a **verified / no source** pill with the number of citations the steps produced. Nothing is invented: an ungrounded answer says `no source`. |
+
+Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
 
 ## Start everything with one command
 
@@ -37,8 +56,9 @@ Env: `KINDRED_MEMORY_URL` (default `http://127.0.0.1:8787`), `KINDRED_CAPTURE_BI
 |---|---|
 | `core.mjs` | All main-process logic (`KindredApp`): drives `CaptureBridge` (`../capture/bridge.mjs`) and `LiveWhisper` (`../capture/live.mjs`), talks to memory over HTTP. No Electron, so it can be tested. |
 | `main.cjs`, `preload.cjs` | Electron shell: window, orb, `⌘⇧K` shortcut, IPC. Adapted from local_ai (Second Nature). Windows are sandboxed, navigation and permission requests are denied, and the CSP blocks network access from the page. |
-| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI. 19px base type, 56px targets, focus rings, reduced motion. |
-| `orb.html`, `orb.js`, `orb.css` | Floating orb. |
+| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
+| `orb.html`, `orb.js`, `orb.css` | The floating mark and its sub-button island. |
+| `mark.mjs`, `mark.css` | The mark: one geometry source (five sage bars) and its motion — still at rest, the voice wave while listening, recording or translating. |
 
 ## Tests
 
@@ -52,15 +72,15 @@ Voice questions use capture's existing short recording path and delete the tempo
 
 ## Your voice ("Teach Kindred my voice")
 
-On the **People** screen, press **Teach Kindred my voice**, read the passage aloud (about 20 s, alone), then press **Done reading**. The app records with live detection off, takes the voiceprint of the voice that talked longest, and sends it to memory's `POST /enroll-owner`. The sample is then **deleted**; it is never stored or docked as a conversation. Afterwards your own voice is labelled "You" and is never whispered about. Recording again adds another sample to your voice (a running average), which helps in a different room or with another mic.
+On the **Memory** screen, press **My voice**, read the passage aloud (about 20 s, alone), then press **Done reading**. The app records with live detection off, takes the voiceprint of the voice that talked longest, and sends it to memory's `POST /enroll-owner`. The sample is then **deleted**; it is never stored or docked as a conversation. Afterwards your own voice is labelled "You" and is never whispered about. Recording again adds another sample to your voice (a running average), which helps in a different room or with another mic.
 
 It refuses with a clear message if it heard less than 6 s of speech. If a second voice talked for more than 20% of the time, it still enrolls the main voice but tells you to record alone. Recording is capped at 40 s.
 
 Measured on synthetic voices (11/14): an owner enrolled from 12 s of reading was recognised in a different conversation at **0.873** with 7.6 s of their speech. Fragments under about 2 s scored 0.70–0.73 (below the 0.85 threshold), and another person scored 0.35–0.68. Real voices still need checking.
 
-## Live translation (orb → Live translation)
+## Live translation (Capture → Translate)
 
-Starts a recording with `translate: true` (`KindredApp.startRecording({ mode: 'translate' })`). Capture sends live `{"event":"translation","seq","language","text","translation",…}` events. Each one is shown on the orb card (original in grey, English large; the latest four) and its English is spoken in order through Argmax TTS, so use earbuds. A repeated `seq` replaces the earlier line. On stop, the session is saved to memory like any conversation, with `language` and `translation` on each line, so later questions can be answered from it. The capture side is in `capture/` (see its README).
+Starts a recording with `translate: true` (`KindredApp.startRecording({ mode: 'translate' })`). Capture sends live `{"event":"translation","seq","language","text","translation",…}` events. Each one appears in the **Capture** transcript (original in grey, English large) and on the floating mark's island, and its English is spoken in order through Argmax TTS, so use earbuds. A repeated `seq` replaces the earlier line. On stop, the session is saved to memory like any conversation, with `language` and `translation` on each line, so later questions can be answered from it. The capture side is in `capture/` (see its README).
 
 ## Two-way: Reply (German, Chinese, Spanish, French)
 
@@ -69,7 +89,7 @@ During **Live translation**, once Kindred has heard one of these four languages,
 2. Bonsai 4B translates it (`app/translate.mjs`, a strict interpreter prompt with one worked example, temperature 0).
 3. Argmax TTSKit says it **out loud** in that language (`speak` with `language`).
 
-The card shows "You: …" and what they heard. The reply targets the most recent supported language Kindred heard.
+The reply appears in the Capture transcript as **You replied** with what was actually spoken. It targets the most recent supported language Kindred heard.
 - **No echo:** live translation ignores the mic while you reply and while Kindred speaks (+0.6 s), so Kindred never translates its own French back to you.
 - **Use the laptop speaker for two-way.** The other person has to hear the reply, and macOS plays through one output device at a time.
 - **Why only these four languages:** in the 11/15 feasibility test, Italian, Portuguese, Japanese, Korean and Russian too often got allergens, days, or "who is speaking" wrong. See `capture/README.md`.
