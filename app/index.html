@@ -4,111 +4,79 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' http://127.0.0.1:*; media-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Kindred</title>
+  <title>Pebble</title>
+  <link rel="stylesheet" href="mark.css">
   <link rel="stylesheet" href="renderer.css">
 </head>
 <body>
-<div id="app" class="app" data-view="record" data-phase="idle">
-  <div id="rec-banner" class="rec-banner" role="alert" hidden>
-    <span class="rec-dot" aria-hidden="true"></span>
-    <span id="rec-banner-text">Recording. Everyone nearby is being recorded on this Mac.</span>
-  </div>
+<div id="app" class="app" data-view="chat" data-phase="idle">
 
-  <header class="top drag">
-    <div class="brand"><span class="mini-orb" aria-hidden="true"></span>Kindred</div>
-    <nav class="tabs no-drag" aria-label="Screens">
-      <button type="button" class="tab active" data-view="record" aria-current="page">Record</button>
-      <button type="button" class="tab" data-view="people">People</button>
-      <button type="button" class="tab" data-view="ask">Ask</button>
-    </nav>
-    <div class="top-right no-drag">
-      <span class="pill" id="capture-pill"><span class="dot" aria-hidden="true"></span><span id="capture-status">Starting…</span></span>
-    </div>
+  <header class="bar drag">
+    <span class="mark" id="brand-mark"></span>
+    <span class="wordmark">Pebble</span>
+    <span class="grow"></span>
+    <button id="status" class="status" type="button" title="This Mac only">
+      <i aria-hidden="true"></i><span id="status-text">Local</span>
+    </button>
   </header>
 
-  <div id="memory-down" class="notice" role="status" hidden>
-    <strong>Memory server not running.</strong>
-    <span>Recording still works, but Kindred can't recognise people or answer questions. In a terminal run:</span>
-    <code>cd memory &amp;&amp; npm run server</code>
-    <button id="memory-retry" type="button" class="btn small">Check again</button>
+  <div class="shell">
+    <nav class="rail" aria-label="Pebble">
+      <button class="nav" type="button" data-view="chat" aria-label="Chat" title="Chat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3V5Z"/></svg>
+      </button>
+      <button class="nav" type="button" data-view="people" aria-label="People" title="People">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16.5 6.2a3 3 0 0 1 0 5.6M17.5 14.4c2 .5 3.2 2.1 3.6 4.6"/></svg>
+      </button>
+      <button class="nav" type="button" data-view="capture" aria-label="Capture" title="Capture">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+      </button>
+    </nav>
+
+    <main class="main">
+      <!-- ===== Chat ===== -->
+      <section id="view-chat" class="view" aria-label="Chat">
+        <div id="thread" class="thread">
+          <div id="empty" class="empty">
+            <p>Ask about anything you've talked about.</p>
+            <div class="suggests">
+              <button class="suggest" type="button">What did Maya ask me to do?</button>
+              <button class="suggest" type="button">Who did I meet this week?</button>
+            </div>
+          </div>
+        </div>
+        <form id="ask-form" class="composer" autocomplete="off">
+          <button id="mic-btn" class="mic" type="button" aria-label="Ask by voice"><span id="mic-mark"></span></button>
+          <label class="sr-only" for="ask-input">Your question</label>
+          <input id="ask-input" maxlength="500" placeholder="Ask…" spellcheck="true">
+          <button id="ask-send" type="submit" aria-label="Send">↑</button>
+        </form>
+      </section>
+
+      <!-- ===== People ===== -->
+      <section id="view-people" class="view page" aria-label="People" hidden>
+        <div class="row">
+          <button id="dock-btn" type="button" class="quiet">Dock today</button>
+          <button id="enroll-btn" type="button" class="quiet">My voice</button>
+        </div>
+        <p id="dock-status" class="fine" hidden></p>
+        <ul id="people" class="people"></ul>
+        <p id="people-empty" class="fine" hidden>No one here yet. Record a conversation, then dock.</p>
+      </section>
+
+      <!-- ===== Capture: just the stone ===== -->
+      <section id="view-capture" class="view capture" aria-label="Capture" hidden>
+        <button id="record-btn" class="stone" type="button" aria-pressed="false" aria-label="Start recording">
+          <span id="stone-mark"></span>
+        </button>
+        <p id="record-hint" class="fine">Tap to record</p>
+        <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
+        <p id="record-result" class="fine" role="status" hidden></p>
+      </section>
+    </main>
   </div>
 
-  <!-- ===== Record ===== -->
-  <main id="view-record" class="view" aria-label="Record">
-    <section class="stage">
-      <button id="record-btn" type="button" class="record-btn" aria-pressed="false">
-        <span class="record-core" aria-hidden="true"></span>
-        <span id="record-label" class="record-label">Start recording</span>
-      </button>
-      <p id="record-hint" class="hint">Tap to start. Tap again to stop.</p>
-      <p id="mic-line" class="mic-line" hidden><span aria-hidden="true">🎙</span> <span id="mic-name"></span></p>
-      <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
-      <section class="voices-wrap" aria-labelledby="voices-title">
-        <h2 id="voices-title" class="section-title">Voices heard</h2>
-        <ul id="voices" class="voices" aria-live="polite"></ul>
-        <p id="voices-empty" class="muted">No voices yet.</p>
-      </section>
-      <p id="record-result" class="result" role="status"></p>
-    </section>
-  </main>
-
-  <!-- ===== People / Dock ===== -->
-  <main id="view-people" class="view" aria-label="People" hidden>
-    <section class="page">
-      <div class="page-head">
-        <div>
-          <h1>People</h1>
-          <p class="muted">Dock after you get home: Bonsai reads today's conversations and updates what it remembers about each person.</p>
-        </div>
-        <button id="dock-btn" type="button" class="btn primary">Dock today's conversations</button>
-      </div>
-      <p id="dock-status" class="result" role="status"></p>
-      <section id="enroll" class="enroll" aria-labelledby="enroll-title">
-        <div class="enroll-text">
-          <h2 id="enroll-title" class="section-title">Your voice</h2>
-          <p id="enroll-hint" class="muted">So Kindred knows when it's you talking and never whispers about you.</p>
-          <blockquote id="enroll-passage" class="enroll-passage" hidden>
-            Hello, this is my voice for Kindred. I'm reading this so it can tell when I'm the one talking.
-            Later today I might see my neighbours, my family, or my doctor, and Kindred will help me remember what we said.
-            When I've finished reading, I'll press the button again.
-          </blockquote>
-          <p id="enroll-result" class="result" role="status"></p>
-        </div>
-        <button id="enroll-btn" type="button" class="btn primary">Teach Kindred my voice</button>
-      </section>
-      <ul id="people" class="people"></ul>
-      <p id="people-empty" class="muted" hidden>No people yet. Record a conversation, then dock.</p>
-    </section>
-  </main>
-
-  <!-- ===== Ask ===== -->
-  <main id="view-ask" class="view" aria-label="Ask" hidden>
-    <section class="page">
-      <h1>Ask</h1>
-      <form id="ask-form" class="ask-form" autocomplete="off">
-        <label for="ask-input" class="sr-only">Your question</label>
-        <input id="ask-input" maxlength="500" placeholder="What did the doctor change about my medication?" spellcheck="true">
-        <button id="ask-btn" type="submit" class="btn primary">Ask</button>
-      </form>
-      <div id="answer-box" class="answer-box" hidden>
-        <p id="answer" class="answer" aria-live="polite"></p>
-        <p id="answer-evidence" class="answer-evidence" aria-live="polite"></p>
-        <div class="answer-actions">
-          <button id="say-again" type="button" class="btn">Say it again</button>
-          <button id="hush" type="button" class="btn">Stop speaking</button>
-        </div>
-        <section id="sources-section" hidden>
-          <h2 class="section-title">Memory sources</h2>
-          <ul id="sources" class="sources"></ul>
-        </section>
-        <section id="clips-section" hidden>
-          <h2 class="section-title">What was said</h2>
-          <ul id="clips" class="clips"></ul>
-        </section>
-      </div>
-      <audio id="player" preload="none"></audio>
-    </section>
-  </main>
+  <audio id="player" preload="none"></audio>
 </div>
 <script type="module" src="renderer.js"></script>
 </body>

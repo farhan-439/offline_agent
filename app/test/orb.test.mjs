@@ -2,7 +2,7 @@
 // kindred-capture, so this tests the app's side of the translation interface only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { orbMenuState, languageName, elapsed } from '../view.mjs';
+import { orbMenuState, languageName, elapsed, routeIntent } from '../view.mjs';
 import { KindredApp, MAX_TRANSLATIONS } from '../core.mjs';
 
 const cap = { available: true };
@@ -42,6 +42,18 @@ test('menu: saving, voice questions, enrollment and missing capture', () => {
   m = orbMenuState({ capture: { available: false, message: 'not built' }, recording: { phase: 'idle' } });
   assert.ok(m.record.disabled && m.translate.disabled);
   assert.equal(m.record.hint, 'not built');
+});
+
+test('intent: one tap is routed by what it heard', () => {
+  assert.equal(routeIntent('Can you translate this for me?').kind, 'translate');
+  assert.equal(routeIntent('start recording').kind, 'record');
+  assert.equal(routeIntent('remember this conversation').kind, 'record');
+  assert.equal(routeIntent('What did Maya ask me to do?').kind, 'ask');
+  assert.equal(routeIntent('what did maya ask me').kind, 'ask');
+  assert.equal(routeIntent('I went to the market and bought plums').kind, 'ask');
+  assert.equal(routeIntent('hello').kind, null, 'one unclear word leaves the three choices up');
+  assert.equal(routeIntent('').kind, null);
+  assert.equal(routeIntent('Translate').text, 'Translate', 'the words are kept for the next step');
 });
 
 test('helpers: language names and timer', () => {

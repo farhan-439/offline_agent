@@ -1,237 +1,263 @@
-import { orbMenuState, voiceLabel, languageName, elapsed } from './view.mjs';
+// Pebble's two surfaces: the stone (this window) and the conversation (?chat=1).
+// One click on the stone starts listening; what you said decides whether Pebble records,
+// translates, or answers. The three sub-buttons are always there to overrule it.
+import { routeIntent, orbMenuState, elapsed } from './view.mjs';
+import { markSVG, mountMark } from './mark.mjs';
 
 const api = window.kindred;
 const $ = (s) => document.querySelector(s);
-const stage = $('#stage'), card = $('#card');
-// Two windows load this page: the small orb, and (?chat) the card it opens.
 const chatMode = new URLSearchParams(window.location.search).has('chat');
 document.body.classList.toggle('chat-mode', chatMode);
-let hideTimer = null, noticeTimer = null;
-let askPhase = 'idle';
-let askingText = false;
+
 let snap = null;
-let chosen = 'menu'; // what the user picked when nothing is running: 'menu' | 'ask'
+let island = 'idle';          // 'idle' | 'choose' | 'live'
+let listening = false;
+let listenTimer = null;
+let pending = null;           // the turn waiting for an answer
+let noticeTimer = null;
+let sizedFor = '';
+let ownCapture = false;       // a recording this stone started (the hub's own recordings stay quiet)
+let awaitingIntent = false;   // listening stopped, waiting for the words
 
-// ---------- views ----------
-/** Recording or translating always shows the live view; a voice question shows Ask; otherwise what was chosen. */
-function currentView(menu) {
-  if (menu.active === 'conversation' || menu.active === 'translate') return 'live';
-  if (menu.active === 'ask') return 'ask';
-  return chosen;
+const SIZES = { idle: [112, 112], choose: [300, 196], live: [320, 208] };
+
+// ---------- the stone ----------
+function sizeFor(state) {
+  if (sizedFor === state) return;
+  sizedFor = state;
+  const [w, h] = SIZES[state] || SIZES.idle;
+  api.resizeOrb(w, h);
 }
 
-function render() {
+function setListening(on) {
+  listening = on;
+  $('#stage').dataset.listening = String(on);
+  $('#pebble').setAttribute('aria-label', on ? 'Pebble is listening. Tap to finish.' : 'Pebble. Tap to talk.');
+}
+
+function line(text) { $('#island-line').textContent = text; }
+
+function renderOrb() {
+  if (chatMode) return;
   const menu = orbMenuState(snap || {});
-  stage.dataset.active = menu.active || '';
-  stage.dataset.phase = snap?.recording?.phase || 'idle';
-  const badge = $('#orb-badge');
-  badge.hidden = !(menu.active === 'conversation' || menu.active === 'translate');
+  const rec = snap?.recording || {};
+  const active = menu.active === 'conversation' || menu.active === 'translate';
+  const saving = rec.phase === 'processing';
+
+  $('#stage').dataset.active = active ? menu.active : '';
+  $('#stage').dataset.phase = rec.phase || 'idle';
+  // The voice mark moves while it listens, records or translates; it rests otherwise.
+  $('#pebble').classList.toggle('is-speaking', !!(listening || active || saving));
+  const badge = $('#badge');
+  badge.hidden = menu.active !== 'translate';
   badge.textContent = menu.active === 'translate' ? '文A' : '';
-  $('#orb').setAttribute('aria-label', menu.active === 'conversation' ? 'Kindred is recording. Click for options'
-    : menu.active === 'translate' ? 'Kindred is translating. Click for options' : 'Kindred. Click for options, right-click for more');
-  if (!chatMode) return;
 
-  const view = currentView(menu);
-  stage.dataset.view = view;
-  for (const v of ['menu', 'live', 'ask']) $(`#view-${v}`).hidden = v !== view;
-  $('#back').hidden = view !== 'ask' || menu.active === 'ask';
-  if (view === 'menu') { $('#card-label').textContent = 'Kindred'; renderMenu(menu); }
-  if (view === 'live') renderLive(menu);
+  if (active || saving) island = ownCapture ? 'live' : 'idle';
+  else if (!listening && island === 'live') island = 'idle';
+  if (listening) island = 'choose';
+
+  $('#island').hidden = island === 'idle';
+  $('#subs').hidden = island !== 'choose';
+  $('#island-stop').hidden = island !== 'live';
+  sizeFor(island);
+
+  // While the stone is listening, the three choices are the point: never grey them out.
+  // They only grey out when the microphone is genuinely busy with a recording or translation.
+  const busy = menu.active === 'conversation' || menu.active === 'translate' || saving;
+  for (const kind of ['record', 'translate', 'ask']) {
+    const m = menu[kind];
+    $(`.sub[data-kind="${kind}"]`).disabled = busy && m.disabled;
+  }
+
+  if (island === 'choose') {
+    if (listening) line('Listening…');
+  } else if (island === 'live') {
+    const t = rec.startedAt ? ` · ${elapsed(Date.now() - rec.startedAt)}` : '';
+    line(saving ? 'Saving…' : menu.active === 'translate' ? `Translating${t}` : `Recording${t}`);
+    $('#island-stop').disabled = saving;
+  }
+  if (active) $('#pebble').setAttribute('aria-label', 'Pebble is recording. Tap to stop.');
 }
 
-function renderMenu(menu) {
-  for (const key of ['record', 'ask', 'translate']) {
-    const m = menu[key];
-    $(`#${key}-label`).textContent = m.label;
-    $(`#${key}-hint`).textContent = m.hint;
-    $(`#choice-${key}`).disabled = m.disabled;
+function beginListen() {
+  if (listening) return;
+  clearTimeout(listenTimer);
+  setListening(true);
+  island = 'choose';
+  line('Listening…');
+  renderOrb();
+  api.startIntentListening().then((r) => {
+    if (!r.ok) { setListening(false); island = 'idle'; line(''); renderOrb(); showNotice(r.error); return; }
+    // A nudge in case the microphone never reports back.
+    listenTimer = setTimeout(() => finishListen(), 9000);
+  });
+}
+
+async function finishListen() {
+  if (!listening) return;
+  clearTimeout(listenTimer);
+  setListening(false);
+  awaitingIntent = true;
+  line('One moment…');
+  const r = await api.stopIntentListening();
+  if (!r.ok) { awaitingIntent = false; island = 'idle'; renderOrb(); showNotice(r.error); }
+}
+
+function route(text) {
+  awaitingIntent = false;
+  const decision = routeIntent(text);
+  if (decision.kind === 'record') return startCapture({});
+  if (decision.kind === 'translate') return startCapture({ mode: 'translate' });
+  if (decision.kind === 'ask') return ask(text.trim());
+  // Nothing clear was said: leave the three choices in front of the person.
+  island = 'choose';
+  line('Which one?');
+  renderOrb();
+}
+
+async function startCapture(opts) {
+  island = 'idle';
+  ownCapture = true;
+  renderOrb();
+  const r = await api.startRecording(opts || {});
+  if (!r.ok) { ownCapture = false; showNotice(r.error); }
+}
+
+async function ask(text) {
+  const q = String(text || '').trim();
+  island = 'idle';
+  renderOrb();
+  if (!q) { api.openChat(); return; }
+  api.openChat();
+  const r = await api.ask(q);
+  if (!r.ok) showNotice(r.error);
+}
+
+function showNotice(text) {
+  if (chatMode) {
+    const n = $('#notice');
+    n.textContent = text;
+    n.hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => { n.hidden = true; }, 8000);
   }
 }
 
-function renderLive(menu) {
-  const rec = snap.recording;
-  const translating = menu.active === 'translate';
-  const m = translating ? menu.translate : menu.record;
-  $('#card-label').textContent = translating ? 'Live translation' : 'Recording';
-  $('#live-title').textContent = rec.phase === 'processing' ? 'Saving…' : translating ? 'Translating into English' : 'Recording';
-  $('#live-time').textContent = rec.startedAt ? elapsed(Date.now() - rec.startedAt) : '';
-  $('#live-note').textContent = rec.phase === 'starting' ? 'Getting the microphone ready…'
-    : rec.phase === 'processing' ? 'Writing down what was said, on this Mac.'
-    : translating ? 'Use earbuds. Kindred says each translation quietly in your ear.'
-    : `Everyone nearby is being recorded${rec.device ? ` on ${rec.device}` : ''}. Kindred whispers who people are.`;
-  $('#live-stop').textContent = m.label;
-  $('#live-stop').disabled = m.disabled;
-
-  const list = $('#live-list');
-  if (translating) {
-    const lines = [...(rec.translations || [])].reverse().slice(0, 4);
-    list.replaceChildren(...lines.map((t) => {
-      const li = document.createElement('li');
-      const original = document.createElement('p'); original.className = 'original';
-      original.textContent = `${languageName(t.language)}: “${t.text}”`;
-      const english = document.createElement('p'); english.className = 'english';
-      english.textContent = t.translation || '(English, no translation needed)';
-      li.append(original, english);
-      return li;
-    }));
-    $('#live-empty').textContent = lines.length ? '' : 'Listening for another language…';
+// ---------- the conversation ----------
+function addTurn(kind, text) {
+  const thread = $('#thread');
+  const turn = document.createElement('div');
+  turn.className = `turn ${kind}`;
+  if (kind === 'pebble') {
+    const dot = document.createElement('span');
+    dot.className = 'dot'; dot.innerHTML = markSVG(20);
+    const body = document.createElement('div');
+    body.className = 'body';
+    const p = document.createElement('p');
+    p.textContent = text;
+    body.append(p);
+    turn.append(dot, body);
   } else {
-    const voices = rec.voices || [];
-    list.replaceChildren(...voices.map((v) => {
-      const li = document.createElement('li'); li.className = v.name ? 'known' : '';
-      const who = document.createElement('span'); who.className = 'who'; who.textContent = voiceLabel(v);
-      const meta = document.createElement('span'); meta.className = 'meta';
-      meta.textContent = [v.seconds ? `${Math.round(v.seconds)} s` : '', v.score != null ? `match ${Math.round(v.score * 100)}%` : ''].filter(Boolean).join(' · ');
-      li.append(who, meta);
-      if (v.whisper) { const p = document.createElement('p'); p.className = 'said'; p.textContent = `“${v.whisper}”`; li.append(p); }
-      return li;
-    }));
-    $('#live-empty').textContent = voices.length ? '' : 'No voices yet.';
+    const p = document.createElement('p');
+    p.textContent = text;
+    turn.append(p);
   }
-}
-setInterval(() => { if (chatMode && stage.dataset.view === 'live' && snap?.recording?.startedAt) $('#live-time').textContent = elapsed(Date.now() - snap.recording.startedAt); }, 1000);
-
-function showNotice(label, text, ms = 15000) {
-  const n = $('#notice');
-  const l = document.createElement('span'); l.className = 'notice-label'; l.textContent = label;
-  n.replaceChildren(l, document.createTextNode(text));
-  n.hidden = false;
-  clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => { n.hidden = true; }, ms);
+  thread.append(turn);
+  thread.scrollTop = thread.scrollHeight;
+  return turn;
 }
 
-// ---------- ask (type or talk) ----------
-function hideCard() {
-  if (chatMode) api.closeChat();
-}
-
-function showCard(label, text, ms = 0) {
-  $('#card-label').textContent = label;
-  $('#card-text').textContent = text;
-  card.hidden = false;
-  clearTimeout(hideTimer);
-  if (ms) hideTimer = setTimeout(hideCard, ms);
-}
-
-function renderAsk(state) {
+function onAnswer(answer) {
   if (!chatMode) return;
-  askPhase = state?.phase || 'idle';
-  const active = ['starting', 'listening', 'processing', 'answering'].includes(askPhase);
-  const listening = askPhase === 'starting' || askPhase === 'listening';
-  $('#orb-mic').dataset.listening = String(listening);
-  $('#orb-mic').disabled = askPhase === 'processing' || askPhase === 'answering' || askingText;
-  $('#orb-mic').textContent = listening ? '■ Done speaking' : '🎙 Talk to Kindred';
-  $('#orb-question').disabled = active;
-  $('#orb-send').disabled = active || askingText;
-  stage.dataset.ask = askPhase;
-  if (state?.error) { chosen = 'ask'; showCard('Kindred', state.error); }
-  if (askPhase === 'starting') $('#ask-status').textContent = 'Starting the microphone…';
-  else if (askPhase === 'listening') $('#ask-status').textContent = `Listening${state.device ? ` on ${state.device}` : ''}… Press Done speaking when finished.`;
-  else if (askPhase === 'processing') $('#ask-status').textContent = 'Transcribing your question with Argmax…';
-  else if (askPhase === 'answering') {
-    showCard('You asked', state.question || 'Your question');
-    $('#ask-status').textContent = 'Bonsai is looking through memory…';
-  } else if (state?.error) $('#ask-status').textContent = 'You can try again.';
-  else if ($('#card-label').textContent !== 'Kindred' && $('#card-label').textContent !== 'Kindred is speaking') $('#ask-status').textContent = '';
+  let body = pending?.body;
+  pending = null;
+  if (body) {
+    body.querySelector('p').textContent = answer.answer || 'I could not find an answer.';
+  } else {
+    addTurn('user', answer.question);
+    body = addTurn('pebble', answer.answer || 'I could not find an answer.').querySelector('.body');
+  }
+  const n = answer.grounded && answer.cites?.length ? `${answer.cites.length} ${answer.cites.length === 1 ? 'source' : 'sources'}` : 'no source';
+  const meta = document.createElement('p');
+  meta.className = 'meta';
+  meta.textContent = n;
+  body.append(meta);
+  const thread = $('#thread');
+  thread.scrollTop = thread.scrollHeight;
 }
 
-function openAsk() {
-  chosen = 'ask';
-  showCard('Ask Kindred', 'Ask about any conversation or saved memory.');
-  $('#ask-status').textContent = '';
-  render();
-  $('#orb-question').focus();
+// ---------- wiring ----------
+if (chatMode) {
+  $('#card').hidden = false;
+  $('#ask-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const input = $('#ask-input');
+    const q = input.value.trim();
+    if (!q) return;
+    input.value = '';
+    $('#ask-send').disabled = true;
+    addTurn('user', q);
+    const turn = addTurn('pebble', '…');
+    pending = { body: turn.querySelector('.body') };
+    try {
+      const r = await api.ask(q);
+      if (!r.ok) { turn.querySelector('p').textContent = r.error; pending = null; }
+    } finally { $('#ask-send').disabled = false; input.focus(); }
+  });
+  $('#card-close').addEventListener('click', () => api.closeChat());
+  api.onChatOpen(() => { $('#card').hidden = false; $('#ask-input').focus(); });
+  setTimeout(() => $('#ask-input').focus(), 60);
+} else {
+  $('#pebble').addEventListener('click', async () => {
+    const phase = snap?.recording?.phase;
+    if (phase === 'processing') return;
+    const active = ['starting', 'recording'].includes(phase) && snap.recording.mode !== 'enroll';
+    if (active) { await api.stopRecording(); return; }
+    if (listening) { finishListen(); return; }
+    beginListen();
+  });
+  $('#pebble').addEventListener('contextmenu', (e) => { e.preventDefault(); api.orbMenu(); });
+
+  for (const btn of document.querySelectorAll('.sub[data-kind]')) {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.kind;
+      if (kind === 'record') startCapture({});
+      else if (kind === 'translate') startCapture({ mode: 'translate' });
+      else ask('');
+    });
+  }
+  $('#island-stop').addEventListener('click', () => api.stopRecording());
 }
 
-// ---------- events from the app ----------
-api.onWhisper((w) => { if (chatMode) showNotice(w.name ? `${w.name} is here` : 'Someone you know', w.text); });
-api.onStatus((s) => {
-  if (!s?.recording) return;
-  snap = s;
-  if (s.ask) renderAsk(s.ask);
-  render();
+api.onIntent((payload) => {
+  if (chatMode) return;
+  if (island !== 'choose') return;
+  route(payload?.text || '');
 });
-api.onAskState((state) => { renderAsk(state); if (snap) { snap = { ...snap, ask: state }; render(); } });
-api.onAskAnswer((answer) => {
-  if (!chatMode) return;
-  chosen = 'ask';
-  showCard('Kindred', answer.answer || 'I could not find an answer.');
-  $('#ask-status').textContent = answer.grounded
-    ? `From saved memory${answer.cites?.length ? ` · ${answer.cites.join(', ')}` : ''}`
-    : 'No saved source verified this answer';
-  $('#orb-question').value = '';
-  render();
-});
+api.onAskAnswer(onAnswer);
+api.onStatus((s) => { if (!s?.recording) return; snap = s; renderOrb(); });
+api.status().then((s) => { if (s?.recording) snap = s; renderOrb(); });
+api.onWhisper((w) => { if (chatMode) showNotice(w.text); });
 api.onRecordingDone((r) => {
-  if (!chatMode) return;
-  if (!r.ok) { if (!r.cancelled) showNotice('Recording failed', r.error, 12000); return; }
-  const what = r.mode === 'translate' ? 'Translated conversation saved' : 'Conversation saved';
-  const lines = `${r.utterances} ${r.utterances === 1 ? 'line' : 'lines'} from ${r.speakers} ${r.speakers === 1 ? 'voice' : 'voices'}.`;
-  showNotice(what, r.ingested ? `${lines} Memory has it. Dock when you get home.` : `${lines} Not sent to memory yet: ${r.ingestError}`, 12000);
+  if (chatMode) return;
+  ownCapture = false;
+  island = 'idle';
+  renderOrb();
+  if (!r.ok && !r.cancelled) showNotice(r.error);
 });
-api.onSpeaking(() => { if (chatMode && stage.dataset.view === 'ask' && $('#card-label').textContent === 'Kindred') $('#card-label').textContent = 'Kindred is speaking'; });
-// Each time the orb is clicked the card opens on the menu, unless something is already running.
-api.onChatOpen(() => {
-  if (!chatMode) return;
-  clearTimeout(hideTimer);
-  card.hidden = false;
-  if (askPhase === 'idle' && !askingText) chosen = 'menu';
-  render();
+api.onAskState((state) => {
+  if (chatMode || !state || !awaitingIntent) return;
+  if (state.error) { awaitingIntent = false; island = 'choose'; line(state.error); renderOrb(); }
+  else if (state.phase === 'idle') { awaitingIntent = false; island = 'choose'; line('Which one?'); renderOrb(); }
 });
-api.status().then((s) => {
-  if (s?.recording) snap = s;
-  if (s?.ask) renderAsk(s.ask);
-  render();
+setInterval(() => { if (island === 'live') renderOrb(); }, 1000);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (chatMode) api.closeChat();
+  else if (listening) finishListen();
+  else { island = 'idle'; renderOrb(); }
 });
 
-// ---------- controls ----------
-$('#orb').addEventListener('click', () => { if (!chatMode) api.openChat(); });
-$('#orb').addEventListener('contextmenu', (e) => { e.preventDefault(); api.orbMenu(); });
-$('#back').addEventListener('click', () => { chosen = 'menu'; render(); });
-$('#card-close').addEventListener('click', hideCard);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCard(); });
-
-async function start(opts) {
-  $('#notice').hidden = true;
-  const r = await api.startRecording(opts);
-  if (!r.ok) showNotice('Kindred', r.error, 8000);
-}
-$('#choice-record').addEventListener('click', () => start({}));
-$('#choice-translate').addEventListener('click', () => start({ mode: 'translate' }));
-$('#choice-ask').addEventListener('click', openAsk);
-$('#live-stop').addEventListener('click', async () => {
-  $('#live-stop').disabled = true;
-  const r = await api.stopRecording();
-  if (!r.ok) showNotice('Kindred', r.error, 8000);
-});
-
-$('#orb-ask-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const question = $('#orb-question').value.trim();
-  if (!question || askingText || askPhase !== 'idle') return;
-  clearTimeout(hideTimer);
-  askingText = true;
-  $('#orb-send').disabled = true; $('#orb-mic').disabled = true;
-  showCard('You asked', question);
-  $('#ask-status').textContent = 'Bonsai is looking through memory…';
-  try {
-    const result = await api.ask(question);
-    if (!result.ok) showCard('Kindred', result.error);
-  } finally {
-    askingText = false;
-    $('#orb-send').disabled = false; $('#orb-mic').disabled = false;
-  }
-});
-$('#orb-mic').addEventListener('click', async () => {
-  clearTimeout(hideTimer);
-  if (askPhase === 'starting' || askPhase === 'listening') {
-    const result = await api.stopAskListening();
-    if (!result.ok) showCard('Kindred', result.error);
-    return;
-  }
-  showCard('Kindred', 'I’m listening. Ask your question, then press Done speaking.');
-  const result = await api.startAskListening();
-  if (!result.ok) { showCard('Kindred', result.error); $('#ask-status').textContent = 'Microphone unavailable.'; }
-});
-
-if (chatMode) { card.hidden = false; render(); }
+mountMark($('#pebble-mark'), 60);
+renderOrb();

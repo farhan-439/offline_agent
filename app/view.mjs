@@ -76,6 +76,27 @@ export function orbMenuState(snap = {}) {
   return { active, record, ask, translate };
 }
 
+/**
+ * What did the person mean? A tap on the pebble starts listening, and what it hears is routed.
+ * Returns { kind: 'record' | 'translate' | 'ask', text }, or { kind: null } when nothing is clear —
+ * then the three sub-buttons stay on screen and the person picks one.
+ */
+export function routeIntent(text) {
+  const said = String(text || '').trim();
+  if (!said) return { kind: null, text: '' };
+  const t = ` ${said.toLowerCase()} `;
+  if (/\b(translat|interpret)/.test(t)) return { kind: 'translate', text: said };
+  if (/\b(record|recording|capture|log this|note this|take (a )?notes?|remember this (conversation|chat))\b/.test(t)) {
+    return { kind: 'record', text: said };
+  }
+  if (/\?\s*$/.test(said) || /^\s*(what|who|when|where|why|how|did|do|does|is|are|was|were|can|could|should|tell me|remind)/.test(t)) {
+    return { kind: 'ask', text: said };
+  }
+  // A whole sentence that is neither a command nor a question is still most likely something to answer.
+  if (said.split(/\s+/).length >= 4) return { kind: 'ask', text: said };
+  return { kind: null, text: said };
+}
+
 /** "fr" → "French" (falls back to the code). */
 export function languageName(code) {
   if (!code) return 'Another language';

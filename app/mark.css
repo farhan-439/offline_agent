@@ -1,0 +1,37 @@
+/* The Pebble voice mark — motion only. Geometry comes from mark.mjs.
+   At rest the bars are completely still. While it listens, records or translates
+   they run the logo-speak wave, each bar on its own clock, under a slow zoom. */
+
+.mark-svg { display: block; overflow: visible; }
+.mark-svg .bar {
+  fill: #5A7A63;
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+/* Speaking: the whole mark zooms in and out while the bars pump. */
+.is-speaking .mark-svg { animation: mark-zoom 1.25s ease-in-out infinite; }
+.is-speaking .mark-svg .bar {
+  animation: mark-speak 0.60s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+}
+.is-speaking .mark-svg .b1 { animation-duration: 0.50s; animation-delay: -0.06s; }
+.is-speaking .mark-svg .b2 { animation-duration: 0.64s; animation-delay: -0.22s; }
+.is-speaking .mark-svg .b3 { animation-duration: 0.56s; animation-delay: -0.38s; }
+.is-speaking .mark-svg .b4 { animation-duration: 0.68s; animation-delay: -0.15s; }
+.is-speaking .mark-svg .b5 { animation-duration: 0.52s; animation-delay: -0.31s; }
+
+@keyframes mark-speak {
+  0%   { transform: scaleY(0.56) translateY(2px); }
+  35%  { transform: scaleY(1.30) translateY(-3px); }
+  70%  { transform: scaleY(0.87) translateY(1px); }
+  100% { transform: scaleY(1.17) translateY(-1.5px); }
+}
+
+@keyframes mark-zoom {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.07); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mark-svg, .mark-svg .bar { animation: none !important; }
+}

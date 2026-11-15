@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
-app.on('second-instance', () => { if (hub && !hub.isDestroyed()) openHub('ask'); });
+app.on('second-instance', () => { if (hub && !hub.isDestroyed()) openHub('chat'); });
 
 // kindred-capture looks for the Argmax key in the nearest .env above its working directory.
 process.chdir(__dirname);
@@ -18,8 +18,8 @@ let startError = null;
 const windows = () => [hub, orb, chat].filter((w) => w && !w.isDestroyed());
 const broadcast = (channel, payload) => { for (const w of windows()) w.webContents.send(channel, payload); };
 
-const ORB_SIZE = { width: 96, height: 96 };
-const CHAT_SIZE = { width: 600, height: 360 };
+const ORB_SIZE = { width: 112, height: 112 };
+const CHAT_SIZE = { width: 560, height: 420 };
 const ORB_MARGIN = 18;
 function orbAnchor() {
   const { workArea } = screen.getPrimaryDisplay();
@@ -43,8 +43,8 @@ const webPreferences = { preload: path.join(__dirname, 'preload.cjs'), contextIs
 
 function createHub() {
   hub = new BrowserWindow({
-    width: 1120, height: 820, minWidth: 760, minHeight: 600,
-    title: 'Kindred', backgroundColor: '#f7f5f1', show: false,
+    width: 1080, height: 780, minWidth: 720, minHeight: 560,
+    title: 'Pebble', backgroundColor: '#F6F4EF', show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 22 },
     webPreferences,
@@ -62,7 +62,7 @@ function createOrb() {
   const { centerX, bottom } = orbAnchor();
   orb = new BrowserWindow({
     x: centerX - ORB_SIZE.width / 2, y: bottom - ORB_SIZE.height, ...ORB_SIZE,
-    title: 'Kindred Orb', frame: false, transparent: true, resizable: false, movable: false,
+    title: 'Pebble', frame: false, transparent: true, resizable: false, movable: false,
     minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, hasShadow: false,
     alwaysOnTop: true, focusable: true, backgroundColor: '#00000000', webPreferences,
   });
@@ -76,7 +76,7 @@ function createChat() {
   const { centerX, bottom } = orbAnchor();
   chat = new BrowserWindow({
     x: centerX - CHAT_SIZE.width / 2, y: bottom - ORB_SIZE.height - CHAT_SIZE.height - 8,
-    ...CHAT_SIZE, title: 'Kindred Chat', frame: false, transparent: true,
+    ...CHAT_SIZE, title: 'Pebble', frame: false, transparent: true,
     resizable: false, movable: false, skipTaskbar: true, hasShadow: false,
     alwaysOnTop: true, focusable: true, show: false, backgroundColor: '#00000000', webPreferences,
   });
@@ -118,6 +118,8 @@ if (primary) app.whenReady().then(async () => {
   ipcMain.handle('memory:ask', safe((q) => need().ask(q)));
   ipcMain.handle('ask:listen-start', safe(() => need().startAskListening()));
   ipcMain.handle('ask:listen-stop', safe(() => need().stopAskListening()));
+  ipcMain.handle('intent:listen-start', safe(() => need().startAskListening({ intent: true })));
+  ipcMain.handle('intent:listen-stop', safe(() => need().stopAskListening()));
   ipcMain.handle('voice:speak', safe((text) => need().speak(text)));
   ipcMain.handle('voice:stop', safe(() => need().stopSpeaking()));
   ipcMain.handle('hub:open', (_e, view) => { openHub(view); return true; });
@@ -127,19 +129,19 @@ if (primary) app.whenReady().then(async () => {
   });
   ipcMain.handle('orb:menu', () => {
     Menu.buildFromTemplate([
-      { label: 'Open Kindred', click: () => openHub() },
+      { label: 'Open Pebble', click: () => openHub() },
       { label: 'People', click: () => openHub('people') },
-      { label: 'Ask', click: () => openHub('ask') },
+      { label: 'Chat', click: () => openHub('chat') },
       { type: 'separator' },
-      { label: 'Hide orb', click: () => orb?.hide() },
-      { label: 'Quit Kindred', click: () => { quitting = true; app.quit(); } },
+      { label: 'Hide pebble', click: () => orb?.hide() },
+      { label: 'Quit Pebble', click: () => { quitting = true; app.quit(); } },
     ]).popup({ window: orb });
   });
   ipcMain.handle('chat:open', () => { openChat(); return true; });
   ipcMain.handle('chat:close', () => { chat?.hide(); return true; });
 
   await Promise.all([createHub(), createOrb(), createChat()]);
-  globalShortcut.register('CommandOrControl+Shift+K', () => openHub('record'));
+  globalShortcut.register('CommandOrControl+Shift+K', () => openHub('chat'));
   try {
     const [core, bridge, live] = await Promise.all([
       import(pathToFileURL(path.join(__dirname, 'core.mjs')).href),

@@ -72,6 +72,7 @@ export class KindredApp {
     this.recordingTask = null;
     this.lastCaptureError = '';
     this.askState = { phase: 'idle', question: null, error: null };
+    this.askIntent = false;
     this.askListeningTask = null;
   }
 
@@ -339,12 +340,14 @@ export class KindredApp {
 
   // ---------- ask ----------
   /** Record one spoken question without sending its transcript or audio to long-term memory. */
-  startAskListening({ simulate } = {}) {
+  startAskListening({ simulate, intent = false } = {}) {
     if (this.recordingTask || this.askListeningTask) throw new Error('Finish the current recording first.');
     if (!this.capture.available) throw new Error(this.capture.message);
     this.stopSpeaking();
+    // Intent: hear the words, then let the caller decide record / translate / ask.
+    this.askIntent = intent;
     this.setAskState({ phase: 'starting', question: null, error: null, device: null });
-    this.askListeningTask = this.runAskListening(simulate).finally(() => { this.askListeningTask = null; });
+    this.askListeningTask = this.runAskListening(simulate).finally(() => { this.askListeningTask = null; this.askIntent = false; });
     return { started: true };
   }
 
@@ -366,6 +369,11 @@ export class KindredApp {
       const question = events.filter((event) => event.type === 'utterance' && event.text?.trim())
         .sort((a, b) => (a.start ?? 0) - (b.start ?? 0)).map((event) => event.text.trim()).join(' ').trim();
       if (!question) throw new Error("I couldn't hear a question. Please try again.");
+      if (this.askIntent) {
+        this.emit('intent', { text: question });
+        this.setAskState({ phase: 'idle' });
+        return;
+      }
       this.setAskState({ phase: 'answering', question, error: null });
       await this.ask(question);
       this.setAskState({ phase: 'idle' });

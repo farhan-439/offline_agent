@@ -219,6 +219,21 @@ test('orb voice question is transcribed, answered aloud, and discarded without i
   app.close(); await mem.close();
 });
 
+test('intent: a tap hears the words, and does not answer them on its own', async () => {
+  const mem = await fakeMemory({ 'POST /ask': () => ({ answer: 'should not be reached', grounded: true }) });
+  const { app, events } = makeApp(mem.url);
+  await app.start();
+  assert.deepEqual(app.startAskListening({ intent: true }), { started: true });
+  await until(() => app.snapshot().ask.phase === 'listening');
+  assert.equal(app.stopAskListening(), true);
+  await until(() => events.some((event) => event.type === 'intent'));
+  assert.equal(events.find((event) => event.type === 'intent').payload.text, 'Where is my spare key?');
+  assert.ok(!mem.calls.some((call) => call.route === 'POST /ask'), 'the decision belongs to the caller');
+  await until(() => app.snapshot().ask.phase === 'idle');
+  assert.ok(!mem.calls.some((call) => call.route === 'POST /ingest'), 'a tap is never saved as a conversation');
+  app.close(); await mem.close();
+});
+
 test('interrupted voice-question files are cleared when the app starts again', () => {
   const folder = path.join(dir, 'data/ask-tmp');
   mkdirSync(folder, { recursive: true });

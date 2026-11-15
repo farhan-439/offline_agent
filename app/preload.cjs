@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('kindred', {
   ask: (question) => ipcRenderer.invoke('memory:ask', question),
   startAskListening: () => ipcRenderer.invoke('ask:listen-start'),
   stopAskListening: () => ipcRenderer.invoke('ask:listen-stop'),
+  startIntentListening: () => ipcRenderer.invoke('intent:listen-start'),
+  stopIntentListening: () => ipcRenderer.invoke('intent:listen-stop'),
   speak: (text) => ipcRenderer.invoke('voice:speak', text),
   stopSpeaking: () => ipcRenderer.invoke('voice:stop'),
   openHub: (view) => ipcRenderer.invoke('hub:open', view),
@@ -26,6 +28,7 @@ contextBridge.exposeInMainWorld('kindred', {
   onSpeaking: on('kindred:speaking'),
   onAskState: on('kindred:ask-state'),
   onAskAnswer: on('kindred:ask-answer'),
+  onIntent: on('kindred:intent'),
   onNavigate: on('hub:navigate'),
   onChatOpen: on('chat:opened'),
 });

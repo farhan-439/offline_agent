@@ -2,66 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Kindred Orb</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Pebble</title>
+  <link rel="stylesheet" href="mark.css">
   <link rel="stylesheet" href="orb.css">
 </head>
 <body>
-  <div id="stage" class="stage" data-phase="idle" data-mode="conversation" data-view="menu">
-    <section id="card" class="card" hidden aria-live="polite">
-      <header class="card-head">
-        <button id="back" type="button" class="back" hidden aria-label="Back to the menu">← Back</button>
-        <span id="card-label" class="card-label">Kindred</span>
-        <button id="card-close" type="button" class="close" aria-label="Close (Kindred keeps running)">✕</button>
-      </header>
-
-      <!-- One orb, three choices -->
-      <div id="view-menu" class="view">
-        <div class="choices" role="group" aria-label="What would you like to do?">
-          <button id="choice-record" type="button" class="choice record">
-            <span class="choice-icon" aria-hidden="true">●</span>
-            <span class="choice-text"><strong id="record-label">Start recording</strong><small id="record-hint"></small></span>
-          </button>
-          <button id="choice-ask" type="button" class="choice ask">
-            <span class="choice-icon" aria-hidden="true">?</span>
-            <span class="choice-text"><strong id="ask-label">Ask a question</strong><small id="ask-hint"></small></span>
-          </button>
-          <button id="choice-translate" type="button" class="choice translate">
-            <span class="choice-icon" aria-hidden="true">文A</span>
-            <span class="choice-text"><strong id="translate-label">Live translation</strong><small id="translate-hint"></small></span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Recording or translating -->
-      <div id="view-live" class="view" hidden>
-        <p class="live-head"><span class="live-dot" aria-hidden="true"></span><span id="live-title">Recording</span><span class="live-time" id="live-time">0:00</span></p>
-        <p id="live-note" class="live-note"></p>
-        <ul id="live-list" class="live-list" aria-live="polite"></ul>
-        <p id="live-empty" class="live-empty"></p>
-        <button id="live-stop" type="button" class="stop">Stop</button>
-      </div>
-
-      <!-- Ask: type or talk -->
-      <div id="view-ask" class="view" hidden>
-        <p id="card-text" class="card-text"></p>
-        <p id="ask-status" class="ask-status" aria-live="polite"></p>
-        <form id="orb-ask-form" class="orb-ask-form" autocomplete="off">
-          <label class="sr-only" for="orb-question">Ask Kindred</label>
-          <input id="orb-question" type="text" maxlength="500" placeholder="Ask about a memory…" spellcheck="true">
-          <button id="orb-send" type="submit">Send</button>
-        </form>
-        <button id="orb-mic" type="button" class="mic">🎙 Talk to Kindred</button>
-      </div>
-
-      <p id="notice" class="notice" hidden aria-live="assertive"></p>
-    </section>
-
-    <button id="orb" type="button" class="orb" aria-label="Kindred. Click for options, right-click for more" title="Kindred">
-      <span class="orb-core" aria-hidden="true"></span><span class="orb-glow" aria-hidden="true"></span>
-      <span id="orb-badge" class="orb-badge" hidden aria-hidden="true"></span>
+  <!-- ===== The pebble (floating window). Only the mark, until you touch it. ===== -->
+  <div id="stage" class="stage" data-island="idle" data-listening="false" data-active="" data-phase="idle">
+    <button id="pebble" class="pebble" type="button" aria-label="Pebble. Tap to talk." title="Pebble">
+      <span id="pebble-mark" class="pebble-mark"></span>
+      <span id="badge" class="badge" hidden aria-hidden="true"></span>
     </button>
+
+    <section id="island" class="island" aria-live="polite">
+      <p id="island-line" class="island-line">Listening…</p>
+      <div id="subs" class="subs" role="group" aria-label="What should Pebble do?">
+        <button type="button" class="sub" data-kind="record"><span class="glyph" aria-hidden="true">●</span>Record</button>
+        <button type="button" class="sub" data-kind="translate"><span class="glyph" aria-hidden="true">文A</span>Translate</button>
+        <button type="button" class="sub" data-kind="ask"><span class="glyph" aria-hidden="true">?</span>Ask</button>
+      </div>
+      <button id="island-stop" class="sub stop" type="button" hidden>Stop</button>
+    </section>
   </div>
+
+  <!-- ===== The conversation (separate window, ?chat=1) ===== -->
+  <section id="card" class="card" hidden>
+    <header class="card-head">
+      <span class="card-title">Pebble</span>
+      <button id="card-close" class="ghost" type="button" aria-label="Close">✕</button>
+    </header>
+    <div id="thread" class="thread"></div>
+    <p id="notice" class="notice" hidden aria-live="assertive"></p>
+    <form id="ask-form" class="composer" autocomplete="off">
+      <label class="sr-only" for="ask-input">Ask Pebble</label>
+      <input id="ask-input" type="text" maxlength="500" placeholder="Ask…" spellcheck="true">
+      <button id="ask-send" type="submit" aria-label="Send">↑</button>
+    </form>
+  </section>
+
   <script type="module" src="orb.js"></script>
 </body>
 </html>
