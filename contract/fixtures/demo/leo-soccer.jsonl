@@ -1,0 +1,6 @@
+{"type":"session_start","session":"demo-leo","startedAt":"2026-11-13T23:20:00Z","place":"phone call on speaker"}
+{"type":"utterance","session":"demo-leo","id":"demo-leo#0001","speaker":"S1","start":0,"end":2.8,"text":"Hi Grandma, it's Leo! Guess what, I made the soccer team.","audio":"data/audio/demo-leo.wav"}
+{"type":"utterance","session":"demo-leo","id":"demo-leo#0002","speaker":"S0","start":3.0,"end":4.4,"text":"Leo, that's wonderful! When is your first game?","audio":"data/audio/demo-leo.wav"}
+{"type":"utterance","session":"demo-leo","id":"demo-leo#0003","speaker":"S1","start":4.7,"end":9.2,"text":"Next Saturday at ten in the morning at Riverside Park. I'm number seven.","audio":"data/audio/demo-leo.wav"}
+{"type":"utterance","session":"demo-leo","id":"demo-leo#0004","speaker":"S0","start":9.5,"end":11.0,"text":"I promise I'll be there with a sign for you.","audio":"data/audio/demo-leo.wav"}
+{"type":"session_end","session":"demo-leo","endedAt":"2026-11-13T23:21:00Z"}

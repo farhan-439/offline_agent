@@ -76,6 +76,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS photo_observations_fts USING fts5(text);
 CREATE TABLE IF NOT EXISTS input_notes (
   rowid INTEGER PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL
 );
+
+-- Bonsai's proposed follow-through, kept separate from facts and never exported silently.
+CREATE TABLE IF NOT EXISTS action_scans (
+  fact_ref TEXT PRIMARY KEY, scanned_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS action_suggestions (
+  id INTEGER PRIMARY KEY, fact_ref TEXT NOT NULL, target TEXT NOT NULL,
+  payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'proposed',
+  created_at TEXT NOT NULL, applied_at TEXT, external_id TEXT,
+  UNIQUE(fact_ref, target)
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS input_notes_fts USING fts5(text);
 
 -- Which people appear in a photo (validated names only)

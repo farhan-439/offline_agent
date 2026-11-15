@@ -1,0 +1,6 @@
+{"type":"session_start","session":"demo-okafor","startedAt":"2026-11-14T16:05:00Z","place":"front yard"}
+{"type":"utterance","session":"demo-okafor","id":"demo-okafor#0001","speaker":"S1","start":0,"end":3.4,"text":"Afternoon! It's Daniel Okafor from across the street.","audio":"data/audio/demo-okafor.wav"}
+{"type":"utterance","session":"demo-okafor","id":"demo-okafor#0002","speaker":"S1","start":3.7,"end":7.9,"text":"Just so you know, recycling pickup moved to Thursday mornings starting this week.","audio":"data/audio/demo-okafor.wav"}
+{"type":"utterance","session":"demo-okafor","id":"demo-okafor#0003","speaker":"S0","start":8.2,"end":11.5,"text":"Thank you, Daniel. I still have your ladder, I'll bring it back by Sunday.","audio":"data/audio/demo-okafor.wav"}
+{"type":"utterance","session":"demo-okafor","id":"demo-okafor#0004","speaker":"S1","start":11.8,"end":13.6,"text":"No rush. Sunday is perfect.","audio":"data/audio/demo-okafor.wav"}
+{"type":"session_end","session":"demo-okafor","endedAt":"2026-11-14T16:06:00Z"}

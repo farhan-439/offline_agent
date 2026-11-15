@@ -10,6 +10,7 @@ import { translateReply, replyLanguage, directedReply, REPLY_LANGUAGES } from '.
 import { MemorySupervisor } from './memory-supervisor.mjs';
 import { RunLog } from './run-log.mjs';
 import { pathToFileURL } from 'node:url';
+import { exportAction as nativeExportAction, validateExport } from './native-actions.mjs';
 
 export const MEMORY_DOWN = 'Memory server not running. Start it: cd memory && npm run server';
 
@@ -61,11 +62,13 @@ export class KindredApp {
     bridgeOptions = {},
     emit = () => {},
     translate = translateReply,
+    exportAction = nativeExportAction,
     superviseMemory = false,
     runLog = null,
     supervisorOptions = {},
   }) {
     this.translate = translate;
+    this.exportAction = exportAction;
     this.repoRoot = repoRoot;
     this.purgeAskTemps();
     this.memoryUrl = memoryUrl.replace(/\/$/, '');
@@ -135,7 +138,7 @@ export class KindredApp {
   async request(route, { method = 'POST', body } = {}) {
     let res;
     try {
-      const timeoutMs = route === '/dock' ? 180000 : route === '/ask' ? 90000 : 15000;
+      const timeoutMs = route === '/dock' || route === '/action-suggestions/scan' ? 180000 : route === '/ask' ? 90000 : 15000;
       const options = { method, timeoutMs, signal: AbortSignal.timeout(timeoutMs) };
       if (method !== 'GET') Object.assign(options, { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
       res = await this.fetchImpl(`${this.memoryUrl}${route}`, options);
@@ -501,6 +504,51 @@ export class KindredApp {
   async traces({ limit = 20 } = {}) {
     const r = await this.request(`/traces?limit=${limit}`, { method: 'GET' });
     return { traces: r.traces || [] };
+  }
+
+  /** Every memory layer and the links between them (raw lines → episodes → facts → people), for the Memory map. */
+  async layers() {
+    return this.request('/layers', { method: 'GET' });
+  }
+
+  /** Bonsai drafts useful follow-through; nothing leaves Pebble until a person confirms. */
+  async actionSuggestions() {
+    const r = await this.request('/action-suggestions', { method: 'GET' });
+    return { suggestions: (r.suggestions || []).map((s) => ({ ...s, source: s.source && this.withEvidence(s.source) })) };
+  }
+
+  async scanActionSuggestions() {
+    const r = await this.request('/action-suggestions/scan', { body: {} });
+    return { ...r, suggestions: (r.suggestions || []).map((s) => ({ ...s, source: s.source && this.withEvidence(s.source) })) };
+  }
+
+  async validateActionSuggestion(id, edited) {
+    const { suggestions } = await this.actionSuggestions();
+    const draft = suggestions.find((s) => s.id === Number(id) && s.status === 'proposed');
+    if (!draft) throw new Error('This action is no longer available for review.');
+    return { target: draft.target, details: validateExport(draft.target, { ...draft.payload, ...edited }) };
+  }
+
+  async addActionSuggestion(id, edited) {
+    const draft = await this.request('/action-suggestions/reserve', { body: { id } });
+    const quote = this.withEvidence(draft.source)?.source?.quote;
+    const source = draft.source;
+    const proof = [`Pebble memory ${source?.ref || ''}`, source?.text ? `Saved fact: ${source.text}` : null,
+      quote?.text ? `Original words: ${quote.text}` : null, quote?.audioUrl ? `Original clip: ${quote.audioUrl}` : null]
+      .filter(Boolean).join('\n');
+    const details = { ...draft.payload, ...edited, details: [edited?.details ?? draft.payload.details, proof].filter(Boolean).join('\n\n') };
+    let result;
+    try { result = await this.exportAction(draft.target, details); }
+    catch (error) {
+      await this.request('/action-suggestions/finish', { body: { id, failed: true } }).catch(() => {});
+      throw error;
+    }
+    // If tracking fails, keep the draft reserved: a second click must not duplicate an Apple item.
+    let trackingError = null;
+    try { await this.request('/action-suggestions/finish', { body: { id, externalId: (result.ids || []).join(',') } }); }
+    catch (error) { trackingError = error.message; }
+    this.runLog.write('action-export', { id, target: draft.target, sourceRef: source?.ref, app: result.app });
+    return { status: trackingError ? 'added_tracking_failed' : 'added', trackingError, ...result };
   }
 
   /** Turn a memory's repo-relative quote audio into a playable file:// URL, when the file is still there. */

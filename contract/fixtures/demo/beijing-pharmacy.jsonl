@@ -1,0 +1,7 @@
+{"type":"session_start","session":"demo-beijing","startedAt":"2026-11-15T02:40:00Z","place":"pharmacy in Beijing"}
+{"type":"utterance","session":"demo-beijing","id":"demo-beijing#0001","speaker":"S1","start":0,"end":2.2,"text":"你好，你需要什么？","language":"zh","translation":"Hello, what do you need?","audio":"data/audio/demo-beijing.wav"}
+{"type":"utterance","session":"demo-beijing","id":"demo-beijing#0002","speaker":"S0","start":2.5,"end":5.8,"text":"我咳嗽。我有糖尿病。我需要无糖止咳糖浆。","language":"zh","translation":"I have a cough. I have diabetes. I need sugar-free cough syrup.","audio":"data/audio/demo-beijing.wav"}
+{"type":"utterance","session":"demo-beijing","id":"demo-beijing#0003","speaker":"S1","start":6.1,"end":9.4,"text":"这个是无糖的。","language":"zh","translation":"This one is sugar-free.","audio":"data/audio/demo-beijing.wav"}
+{"type":"utterance","session":"demo-beijing","id":"demo-beijing#0004","speaker":"S1","start":9.7,"end":14.0,"text":"Tome esto tres veces al día, durante cinco días.","language":"es","translation":"Take this three times a day, for five days.","audio":"data/audio/demo-beijing.wav"}
+{"type":"utterance","session":"demo-beijing","id":"demo-beijing#0005","speaker":"S0","start":14.3,"end":15.6,"text":"谢谢！","language":"zh","translation":"Thank you!","audio":"data/audio/demo-beijing.wav"}
+{"type":"session_end","session":"demo-beijing","endedAt":"2026-11-15T02:41:00Z"}

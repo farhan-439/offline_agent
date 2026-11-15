@@ -1,0 +1,5 @@
+{"type":"session_start","session":"demo-madrid","startedAt":"2026-11-14T13:15:00Z","place":"bus stop in Madrid"}
+{"type":"utterance","session":"demo-madrid","id":"demo-madrid#0001","speaker":"S0","start":0,"end":2.6,"text":"Perdone, ¿cómo llego al Museo del Prado?","language":"es","translation":"Excuse me, how do I get to the Prado Museum?","audio":"data/audio/demo-madrid.wav"}
+{"type":"utterance","session":"demo-madrid","id":"demo-madrid#0002","speaker":"S1","start":2.9,"end":6.8,"text":"Tome el autobús veintisiete y bájese después de cuatro paradas.","language":"es","translation":"Take bus twenty-seven and get off after four stops.","audio":"data/audio/demo-madrid.wav"}
+{"type":"utterance","session":"demo-madrid","id":"demo-madrid#0003","speaker":"S1","start":7.1,"end":9.9,"text":"El museo cierra a las ocho de la tarde.","language":"es","translation":"The museum closes at eight in the evening.","audio":"data/audio/demo-madrid.wav"}
+{"type":"session_end","session":"demo-madrid","endedAt":"2026-11-14T13:16:00Z"}

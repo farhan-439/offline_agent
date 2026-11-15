@@ -1,19 +1,21 @@
 // Pebble's main window: the stone that records, the conversation, and the memory workspace.
 import { recordButtonState, enrollButtonState, dockSummary, formatClipTime, languageName } from './view.mjs';
 import { markSVG, mountMark } from './mark.mjs';
+import { mountActions } from './actions.mjs';
+import { isRunPhrase } from './voice-run.mjs';
 
 const api = window.kindred;
 const $ = (s) => document.querySelector(s);
 const app = $('#app');
 const thread = $('#thread');
 const empty = $('#empty');
+const actions = mountActions(api, { play });
 
 mountMark($('#brand-mark'), 22);
-mountMark($('#mic-mark'), 26);
-mountMark($('#stone-mark'), 124);
+mountMark($('#stone-mark'), 138);
 
 let snap = null;
-let mode = 'record';           // 'record' | 'translate' — what the stone does when tapped
+let mode = 'record';           // 'record' | 'translate' | 'ask' — what the stone does when tapped
 let ownerVoiceKnown = false;
 let pendingTurn = null;
 let lastAnswer = '';
@@ -24,7 +26,7 @@ let relations = [];
 let memories = [];
 let inputs = [];
 let traces = [];
-let selectedPerson = null;
+let layers = null;
 let selectedMemory = null;
 let layer = 'facts';
 let search = '';
@@ -36,23 +38,27 @@ let liveState = 'idle';
 
 // ---------- navigation ----------
 function show(view) {
+  if (view === 'chat' || view === 'ask') { setMode('ask'); view = 'capture'; }
+  if (!['capture', 'memory'].includes(view)) view = 'capture';
   app.dataset.view = view;
   for (const nav of document.querySelectorAll('.nav')) {
     const on = nav.dataset.view === view;
     if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
   }
-  for (const v of ['capture', 'chat', 'memory', 'atlas']) $(`#view-${v}`).hidden = v !== view;
+  for (const v of ['capture', 'memory']) $(`#view-${v}`).hidden = v !== view;
   if (view === 'memory') loadMemory();
-  if (view === 'atlas') loadAtlas();
-  if (view === 'chat') $('#ask-input').focus();
+  if (view === 'capture' && mode === 'ask') $('#ask-input').focus();
 }
 for (const nav of document.querySelectorAll('.nav')) nav.addEventListener('click', () => show(nav.dataset.view));
 api.onNavigate((view) => show(typeof view === 'string' ? view : 'capture'));
 
 // ---------- the stone: what it does when you tap it ----------
 function setMode(next) {
+  if (!['record', 'translate', 'ask'].includes(next)) return;
   mode = next;
   app.dataset.mode = mode;
+  $('#ask-panel').hidden = mode !== 'ask';
+  $('#live-panel').hidden = mode !== 'translate';
   for (const b of document.querySelectorAll('.mode')) b.setAttribute('aria-selected', String(b.dataset.mode === mode));
   renderMode();
 }
@@ -69,28 +75,34 @@ function clock(rec) {
 function renderMode() {
   const rec = snap?.recording || {};
   const busy = ['starting', 'recording', 'processing'].includes(rec.phase) && rec.mode !== 'enroll';
+  const ask = snap?.ask || {};
+  const askPhase = ask.phase || 'idle';
+  const askBusy = askPhase !== 'idle';
   // A recording started anywhere (orb, shortcut) owns the switch while it runs.
   const shown = busy ? (rec.mode === 'translate' ? 'translate' : 'record') : mode;
   const translating = rec.mode === 'translate' && busy;
 
   const line = $('#mode-line');
-  if (shown === 'translate') line.textContent = translating ? `Translating${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
+  if (shown === 'ask') line.textContent = ({ starting: 'Starting microphone…', listening: 'Listening — tap to finish', processing: 'Transcribing your question…', answering: 'Finding your answer…' })[askPhase] || 'Tap to ask by voice';
+  else if (shown === 'translate') line.textContent = translating ? `Translating${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
   else line.textContent = capturing(rec) ? `Recording${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to record';
 
   const enrolling = rec.mode === 'enroll' && rec.phase !== 'idle';
-  $('#record-btn').disabled = rec.phase === 'processing' || enrolling;
-  $('#record-btn').setAttribute('aria-pressed', String(capturing(rec)));
-  $('#record-btn').classList.toggle('is-speaking', ['starting', 'recording', 'processing'].includes(rec.phase));
+  $('#record-btn').disabled = rec.phase === 'processing' || enrolling || (shown === 'ask' && ['processing', 'answering'].includes(askPhase));
+  $('#record-btn').setAttribute('aria-pressed', String(capturing(rec) || (shown === 'ask' && ['starting', 'listening'].includes(askPhase))));
+  $('#record-btn').setAttribute('aria-label', shown === 'ask' ? (['starting', 'listening'].includes(askPhase) ? 'Stop listening' : 'Ask by voice') : capturing(rec) ? 'Stop recording' : shown === 'translate' ? 'Start translating' : 'Start recording');
+  $('#record-btn').classList.toggle('is-speaking', ['starting', 'recording', 'processing'].includes(rec.phase) || (shown === 'ask' && askBusy));
 
   // While the microphone is busy the other modes are unavailable — say why, don't just grey out.
   for (const b of document.querySelectorAll('.mode')) {
     b.setAttribute('aria-selected', String(b.dataset.mode === shown));
-    b.disabled = busy || enrolling;
+    b.disabled = busy || enrolling || askBusy;
   }
   $('#mode-busy').dataset.mode = shown;
   const busyLine = $('#mode-busy');
-  busyLine.hidden = !(busy || enrolling);
+  busyLine.hidden = !(busy || enrolling || askBusy);
   busyLine.textContent = enrolling ? 'Learning your voice — finish that first.'
+    : askBusy ? (['starting', 'listening'].includes(askPhase) ? 'Asking — tap the stone to stop listening.' : 'Working on your question…')
     : rec.phase === 'processing' ? 'Saving this conversation…'
     : translating ? 'Translating — tap the stone to stop.'
     : 'Recording — tap the stone to stop.';
@@ -100,6 +112,14 @@ $('#record-btn').addEventListener('click', async () => {
   const phase = snap?.recording?.phase || 'idle';
   if (phase === 'starting' || phase === 'recording') { await api.stopRecording(); return; }
   if (phase === 'processing') return;
+  if (mode === 'ask') {
+    const askPhase = snap?.ask?.phase || 'idle';
+    if (['starting', 'listening'].includes(askPhase)) { await api.stopAskListening(); return; }
+    if (askPhase !== 'idle') return;
+    const r = await api.startAskListening();
+    if (!r.ok) addTurn('pebble', r.error);
+    return;
+  }
   const r = await api.startRecording(mode === 'translate' ? { mode: 'translate' } : {});
   if (!r.ok) result(r.error);
 });
@@ -120,6 +140,7 @@ function render(next) {
   renderMode();
   renderEnroll(recording, capture);
   renderLive(recording);
+  renderAskState(next.ask);
 
   if (next.whisper && capturing(recording)) {
     $('#whisper').hidden = false;
@@ -165,7 +186,7 @@ function renderLive(rec) {
   }
 
   const panel = $('#live-panel');
-  panel.hidden = false;
+  panel.hidden = mode !== 'translate';
   const stateEl = $('#live-state');
   stateEl.textContent = { translating: 'Translating', listening: 'Listening to you', speaking: 'Speaking your reply', saving: 'Saving', starting: 'Starting', stopped: 'Saved', idle: 'Ready' }[liveState] || 'Live';
   $('#live-meta').textContent = rec.session ? `${liveRows.size} ${liveRows.size === 1 ? 'line' : 'lines'}` : '';
@@ -264,6 +285,7 @@ $('#dock-btn').addEventListener('click', async () => {
     if (!r.ok) { dockStatus(r.error); return; }
     dockStatus(dockSummary(r.value.report));
     await loadMemory();
+    void actions.scan();
   } finally { btn.disabled = false; btn.textContent = 'Dock today'; }
 });
 
@@ -271,331 +293,46 @@ api.onRecordingDone((r) => {
   if (!r.ok) { if (!r.cancelled) result(r.error); return; }
   const saved = `Saved ${r.utterances} ${r.utterances === 1 ? 'line' : 'lines'} from ${r.speakers} ${r.speakers === 1 ? 'voice' : 'voices'}.`;
   result(r.ingested ? `${saved} Memory has it.` : `${saved} Not in memory yet: ${r.ingestError}`);
+  // A finished session is the moment to look for follow-through, so an action from what was
+  // just said is already waiting in Memory by the time the owner looks.
+  if (r.ingested) setTimeout(() => { void actions.scan(); }, 600);
+});
+
+// "Run" said out loud: run what was reviewed, or the newest proposal with only the date and
+// time the owner actually spoke. Nothing reaches a Mac app without a validated detail set.
+api.onIntent(async (payload) => {
+  const text = String(payload?.text || '');
+  if (!isRunPhrase(text)) return;
+  const r = await actions.runFromVoice(text);
+  const status = $('#actions-status');
+  if (!status) return;
+  if (r.ok) status.textContent = `Ran ${r.added} action${r.added === 1 ? '' : 's'} into your Mac apps.`;
+  else if (r.error) status.textContent = r.needsDetail ? `Heard you. ${r.error}` : r.error;
 });
 
 // ---------- memory workspace ----------
-async function loadMemory() {
-  const [p, m, i, t] = await Promise.all([api.people(), api.memories(), api.inputs(), api.traces()]);
-  if (p.ok) { people = p.value.people || []; relations = p.value.relations || []; }
-  if (m.ok) memories = m.value.memories || [];
-  if (i.ok) inputs = i.value.inputs || [];
-  if (t.ok) traces = t.value.traces || [];
-  ownerVoiceKnown = people.some((x) => x.owner && x.voiceSamples > 0);
-  if (snap) renderEnroll(snap.recording, snap.capture);
-
-  const failed = [p, m, i, t].find((r) => !r.ok);
-  $('#mem-summary').textContent = failed
-    ? (failed.error || 'Memory is not running.')
-    : `${memories.length} facts · ${inputs.length} inputs · ${people.length} people · ${traces.length} recalls`;
-
-  if (!selectedMemory && memories.length) selectedMemory = memories[0];
-  fillFilters();
-  renderPeople();
-  renderLayers();
-  drawMap();
-}
-
-const relationOf = (p) => (p.relation && p.relation !== 'device owner' ? p.relation : null)
-  || (relations.find((r) => (r.a === p.id || r.b === p.id))?.label) || null;
-
-function fillFilters() {
-  const ps = $('#layer-person');
-  const keep = ps.value;
-  ps.replaceChildren(new Option('All people', ''));
-  for (const p of people) ps.append(new Option(p.name, p.id));
-  ps.append(new Option('Miscellaneous', '__misc__'));
-  ps.value = keep === '__misc__' || people.some((p) => p.id === keep) ? keep : (selectedPerson || '');
-
-  const kinds = [...new Set(memories.map((m) => m.kind).filter(Boolean))].sort();
-  const ks = $('#layer-kind');
-  const keepKind = ks.value;
-  ks.replaceChildren(new Option('All types', ''));
-  for (const k of kinds) ks.append(new Option(k, k));
-  ks.value = kinds.includes(keepKind) ? keepKind : '';
-}
-
-function renderPeople() {
-  const list = $('#people-list');
-  const rel = (p) => ((p.owner ?? !!p.is_owner) ? 'You' : relationOf(p) || 'Relation unknown');
-  list.replaceChildren(...people.map((p) => {
-    const li = document.createElement('li');
-    const isOwner = p.owner ?? !!p.is_owner;
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'prow';
-    b.setAttribute('aria-pressed', String(selectedPerson === p.id));
-    b.setAttribute('aria-label', `${p.name}, ${isOwner ? 'you' : rel(p)}, ${p.facts} facts${p.voiceSamples ? ', voice known' : ''}`);
-
-    const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name;
-    if (p.core) {
-      const core = document.createElement('span'); core.className = 'pcore';
-      core.textContent = p.core;
-      name.append(core);
-    }
-    const relEl = document.createElement('span'); relEl.className = 'prel'; relEl.textContent = rel(p);
-    const facts = document.createElement('span'); facts.className = 'pfacts'; facts.textContent = String(p.facts ?? 0);
-    const dot = document.createElement('span'); dot.className = 'voice-dot';
-    dot.dataset.known = String(!!p.voiceSamples);
-    dot.title = p.voiceSamples ? 'Voice known' : 'Voice not known yet';
-
-    b.append(name, relEl, facts, dot);
-    b.addEventListener('click', () => {
-      selectedPerson = selectedPerson === p.id ? null : p.id;
-      $('#layer-person').value = selectedPerson || '';
-      renderPeople(); renderLayers();
-    });
-    li.append(b);
-    list.append(li);
-    return li;
-  }));
-  $('#people-count').textContent = `${people.length}`;
-}
-
-function currentRows() {
-  const q = search.trim().toLowerCase();
-  const pid = $('#layer-person').value;
-  const kind = $('#layer-kind').value;
-  const has = (s) => !q || String(s || '').toLowerCase().includes(q);
-
-  if (layer === 'inputs') {
-    return inputs.filter((x) => has(x.text)).map((x) => ({
-      key: x.id, ref: x.id, text: x.text, kind: null, who: '—', memory: null, personId: null,
-    }));
-  }
-  if (layer === 'core') {
-    return people.filter((p) => p.core && (!pid || p.id === pid) && has(p.core)).map((p) => ({
-      key: p.id, ref: p.id, text: p.core, kind: null, who: p.name, memory: null, personId: p.id,
-    }));
-  }
-  // facts and evidence come from /memories
-  return memories
-    .filter((m) => (!pid || (pid === '__misc__' ? !m.person : m.person?.id === pid)) && (!kind || m.kind === kind))
-    .filter((m) => (layer === 'evidence' ? has(m.source?.quote?.text) : has(m.text)))
-    .map((m) => ({
-      key: m.ref,
-      ref: m.ref,
-      text: layer === 'evidence' ? `“${m.source?.quote?.text || ''}”` : m.text,
-      kind: m.kind || 'fact',
-      who: m.person?.name || 'Miscellaneous',
-      memory: m,
-      personId: m.person?.id || null,
-    }));
-}
+// A shelf, not a diagram: one tile for every thing Pebble keeps, the few numbers it can
+// prove beside it, and the last two weeks along the bottom. Nothing is invented — every
+// tile is a stored fact or note, every count is read from an endpoint.
 
 const KIND_CLASS = { health: 'health', task: 'task', place: 'place', home: 'home' };
 const kindClass = (k) => KIND_CLASS[String(k || '').toLowerCase()] || 'other';
+const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : '');
+const relationOf = (p) => (p?.relation && p.relation !== 'device owner' ? p.relation : null)
+  || (relations.find((r) => (r.a === p?.id || r.b === p?.id))?.label) || null;
 
-function renderLayers() {
-  for (const tab of document.querySelectorAll('.ltab')) tab.setAttribute('aria-selected', String(tab.dataset.layer === layer));
-  const rows = currentRows();
-  $('#layer-count').textContent = `${rows.length}`;
-  const list = $('#layer-list');
-  if (!rows.length) {
-    list.replaceChildren(Object.assign(document.createElement('p'), {
-      className: 'hint', textContent: search ? 'Nothing matches that search.' : 'Nothing in this layer yet.',
-    }));
-    return;
-  }
-  list.replaceChildren(...rows.map((r) => {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'lrow';
-    b.setAttribute('aria-pressed', String(!!selectedMemory && r.memory?.ref === selectedMemory.ref));
+let memSearch = '';
+let memSession = null;            // a recording to narrow the shelf to
+let memSessionsOpen = false;      // show every recording, not just the first six
+const memKinds = new Set();       // empty = every type
+let selectedInput = null;
+let selectedTrace = null;
+let selectedCore = null;
+let memOffline = false;
 
-    const ref = document.createElement('span'); ref.className = 'lref'; ref.textContent = r.ref || '—';
-    const text = document.createElement('span'); text.className = 'ltext';
-    if (r.kind) {
-      const tag = document.createElement('span');
-      tag.className = `tag ${kindClass(r.kind)}`;
-      tag.textContent = r.kind;
-      text.append(tag, document.createTextNode(` ${r.text}`));
-    } else {
-      text.textContent = r.text;
-    }
-    const who = document.createElement('span'); who.className = 'lperson'; who.textContent = r.who || '—';
+const sessionCount = (list) => new Set(list.map((m) => m.source?.session).filter(Boolean)).size;
 
-    b.append(ref, text, who);
-    b.addEventListener('click', () => {
-      if (r.memory) selectMemory(r.memory);
-      else if (r.personId) { selectedPerson = r.personId; $('#layer-person').value = r.personId; renderPeople(); renderLayers(); }
-    });
-    li.append(b);
-    list.append(li);
-    return li;
-  }));
-}
-
-function selectMemory(m) {
-  selectedMemory = m;
-  mapMode = 'fact';
-  renderLayers();
-  drawMap();
-}
-
-let mapMode = 'fact';
-let traceIndex = 0;
-
-function clearMap() {
-  const host = $('#map-canvas');
-  host.replaceChildren();
-  $('#map-foot').replaceChildren();
-  return host;
-}
-
-function mapEmpty(host, text) {
-  const p = document.createElement('p');
-  p.className = 'map-empty';
-  p.textContent = text;
-  host.append(p);
-}
-
-/** Absolute-positioned label inside the canvas; percentages so it scales with the panel. */
-function mapNode(host, cls, x, y, text) {
-  const el = document.createElement('div');
-  el.className = `mnode ${cls}`;
-  el.style.left = `${x}%`;
-  el.style.top = `${y}%`;
-  if (text != null) el.textContent = text;
-  host.append(el);
-  return el;
-}
-
-/** The SVG line layer: 0–100 in both axes, stretched, strokes kept 1px. */
-function mapLines(host) {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('class', 'map-lines');
-  svg.setAttribute('viewBox', '0 0 100 100');
-  svg.setAttribute('preserveAspectRatio', 'none');
-  host.append(svg);
-  return (x1, y1, x2, y2, soft = false) => {
-    const path = document.createElementNS(NS, 'path');
-    const bend = Math.min(14, Math.max(4, Math.abs(y2 - y1) / 3));
-    path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`);
-    if (soft) path.setAttribute('class', 'soft');
-    svg.append(path);
-  };
-}
-
-function footSpacer() {
-  const s = document.createElement('span');
-  s.className = 'grow';
-  return s;
-}
-
-function drawMap() {
-  for (const tab of document.querySelectorAll('.mtab')) tab.setAttribute('aria-selected', String(tab.dataset.map === mapMode));
-  const host = clearMap();
-  if (mapMode === 'recalls') return drawRecallMap(host);
-  return drawFactMap(host);
-}
-
-/** One fact, the person it belongs to, that person's other facts, and where it was heard. */
-function drawFactMap(host) {
-  const m = selectedMemory;
-  const foot = $('#map-foot');
-  if (!m) { mapEmpty(host, 'Pick a memory from the layers to see what it connects to.'); return; }
-
-  const line = mapLines(host);
-  const person = m.person?.name || 'Unsorted';
-  const siblings = memories.filter((x) => x.ref !== m.ref && (x.person?.id ?? null) === (m.person?.id ?? null)).slice(0, 3);
-
-  const P = [50, 12], F = [50, 42], S = [50, 88];
-  const sibY = 67;
-  const sibX = siblings.length === 1 ? [50] : siblings.length === 2 ? [26, 74] : [17, 50, 83];
-
-  for (const [y, label] of [[12, 'who'], [42, 'what it knows'], [88, 'where it was heard']]) {
-    const band = document.createElement('span');
-    band.className = 'map-band';
-    band.style.top = `${y}%`;
-    band.textContent = label;
-    host.append(band);
-  }
-  mapNode(host, 'person', P[0], P[1], person);
-  siblings.forEach((s, i) => {
-    line(P[0], P[1], sibX[i], sibY, true);
-    mapNode(host, 'sib', sibX[i], sibY, s.text);
-  });
-  line(P[0], P[1], F[0], F[1]);
-  mapNode(host, 'fact', F[0], F[1], m.text);
-  line(F[0], F[1], S[0], S[1]);
-  mapNode(host, 'session', S[0], S[1], m.source?.session ? `session ${m.source.session}` : 'no saved session');
-
-  const meta = document.createElement('span');
-  meta.textContent = [m.ref, dateOnly(m.createdAt), m.scope, m.uses ? `${m.uses} uses` : 'never used'].filter(Boolean).join(' · ');
-  foot.append(meta);
-  if (m.source?.quote?.text) {
-    const q = document.createElement('span');
-    q.className = 'quote';
-    q.textContent = `“${m.source.quote.text}”`;
-    foot.append(q);
-  } else foot.append(footSpacer());
-  if (m.source?.quote?.audioUrl) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'act'; b.textContent = 'Play';
-    b.title = 'Play the moment this was heard';
-    b.addEventListener('click', () => play({
-      url: m.source.quote.audioUrl,
-      start: Number(m.source.quote.start),
-      end: Number(m.source.quote.end),
-    }));
-    foot.append(b);
-  }
-}
-
-/** One recall: the question, what Bonsai loaded, what it cited, and the answer. */
-function drawRecallMap(host) {
-  const foot = $('#map-foot');
-  if (!traces.length) { mapEmpty(host, 'No questions asked yet. Ask something in Chat.'); return; }
-  traceIndex = Math.min(Math.max(traceIndex, 0), traces.length - 1);
-  const t = traces[traceIndex];
-
-  const cited = new Set();
-  const loaded = new Set();
-  for (const step of t.trace || []) {
-    for (const c of step.cite || []) cited.add(c);
-    for (const l of step.loaded || []) loaded.add(l);
-  }
-  const refs = [...cited, ...[...loaded].filter((r) => !cited.has(r))].slice(0, 5);
-
-  const line = mapLines(host);
-  const Q = [50, 12], A = [50, 88];
-  const refY = 50;
-  const spread = refs.length === 1 ? [50] : refs.map((_, i) => 14 + (72 * i) / (refs.length - 1));
-
-  mapNode(host, 'question', Q[0], Q[1], t.question);
-  refs.forEach((r, i) => {
-    line(Q[0], Q[1], spread[i], refY);
-    const n = mapNode(host, cited.has(r) ? 'ref cited' : 'ref', spread[i], refY, r);
-    n.title = cited.has(r) ? 'Cited in the answer' : 'Retrieved, not cited';
-  });
-  if (!refs.length) {
-    const none = mapNode(host, 'ref', 50, refY, 'nothing retrieved');
-    none.title = 'No retrieval steps were recorded';
-  }
-  refs.forEach((r, i) => line(spread[i], refY, A[0], A[1]));
-  if (!refs.length) line(Q[0], Q[1], A[0], A[1], true);
-  mapNode(host, 'answer', A[0], A[1], t.answer || 'No answer saved.');
-
-  const state = document.createElement('span');
-  state.className = `state ${t.grounded ? 'ok' : 'none'}`;
-  state.textContent = t.grounded ? 'verified' : 'no source';
-  const when = document.createElement('span');
-  when.textContent = `${traceIndex + 1} / ${traces.length}${t.created_at ? ` · ${dateOnly(t.created_at)}` : ''}`;
-  foot.append(state, when, footSpacer());
-
-  const prev = document.createElement('button');
-  prev.type = 'button'; prev.className = 'step'; prev.textContent = '‹'; prev.setAttribute('aria-label', 'Previous recall');
-  prev.disabled = traceIndex === 0;
-  prev.addEventListener('click', () => { traceIndex -= 1; drawMap(); });
-  const next = document.createElement('button');
-  next.type = 'button'; next.className = 'step'; next.textContent = '›'; next.setAttribute('aria-label', 'Next recall');
-  next.disabled = traceIndex >= traces.length - 1;
-  next.addEventListener('click', () => { traceIndex += 1; drawMap(); });
-  foot.append(prev, next);
-}
-
+/** How many memories one recall actually pointed at (cited first, then merely loaded). */
 function sourceCount(trace) {
   const cited = new Set();
   const loaded = new Set();
@@ -606,17 +343,578 @@ function sourceCount(trace) {
   return (cited.size ? cited : loaded).size;
 }
 
-const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : '');
 
-for (const tab of document.querySelectorAll('.ltab')) {
-  tab.addEventListener('click', () => { layer = tab.dataset.layer; renderLayers(); });
+async function loadMemory() {
+  const [p, m, i, t, l] = await Promise.all([api.people(), api.memories(), api.inputs(), api.traces(), api.layers(), actions.load()]);
+  layers = l.ok ? l.value : null;
+  if (p.ok) { people = p.value.people || []; relations = p.value.relations || []; }
+  if (m.ok) memories = m.value.memories || [];
+  if (i.ok) inputs = i.value.inputs || [];
+  if (t.ok) traces = t.value.traces || [];
+  ownerVoiceKnown = people.some((x) => x.owner && x.voiceSamples > 0);
+  if (snap) renderEnroll(snap.recording, snap.capture);
+
+  const failed = [p, m, i, t].find((r) => !r.ok);
+  memOffline = Boolean(failed);
+  $('#mem-summary').textContent = failed
+    ? (failed.error || 'Memory is not running.')
+    : `${memories.length} facts · ${sessionCount(memories)} recordings · ${inputs.length} notes · ${people.length} people`;
+
+  if (!selectedMemory && memories.length) selectedMemory = memories[0];
+  if (selectedMemory && !memories.some((x) => x.ref === selectedMemory.ref)) selectedMemory = memories[0] || null;
+  if (selectedInput && !inputs.some((x) => x.id === selectedInput.id)) selectedInput = null;
+  if (selectedTrace && !traces.some((x) => x.id === selectedTrace.id)) selectedTrace = null;
+  renderMem();
 }
-for (const tab of document.querySelectorAll('.mtab')) {
-  tab.addEventListener('click', () => { mapMode = tab.dataset.map; drawMap(); });
+
+// ---------- memory tabs: the actions board, or the shelf ----------
+function setMemTab(next) {
+  for (const b of document.querySelectorAll('#view-memory .memtab')) {
+    b.setAttribute('aria-selected', String(b.dataset.memtab === next));
+  }
+  const board = $('#actions-board');
+  const shelf = $('#view-memory .mem-grid');
+  if (board) board.hidden = next !== 'actions';
+  if (shelf) {
+    shelf.hidden = next !== 'shelf';
+    // The shelf is only built when it is on screen, so opening the tab draws it.
+    if (!shelf.hidden) renderMem();
+  }
 }
-$('#layer-search').addEventListener('input', (e) => { search = e.target.value; renderLayers(); });
-$('#layer-person').addEventListener('change', (e) => { selectedPerson = e.target.value || null; renderPeople(); renderLayers(); });
-$('#layer-kind').addEventListener('change', () => renderLayers());
+
+for (const b of document.querySelectorAll('#view-memory .memtab')) {
+  b.addEventListener('click', () => setMemTab(b.dataset.memtab));
+}
+
+$('#say-run')?.addEventListener('click', async () => {
+  const status = $('#actions-status');
+  if (status) status.textContent = 'Listening for “run”…';
+  const r = await api.startIntentListening();
+  if (!r.ok && status) status.textContent = r.error || 'Could not open the microphone.';
+});
+
+function renderMem() {
+  // The shelf is its own tab; the Actions board renders itself.
+  if ($('#view-memory .mem-grid')?.hidden) return;
+  renderField();
+  renderLegend();
+  renderRecordBar();
+  renderRecall();
+  renderQuestions();
+  renderMachine();
+  renderActivity();
+}
+
+/* ---------- the shelf ---------- */
+
+function renderLegend() {
+  const host = $('#kind-legend');
+  host.replaceChildren();
+
+  if (memSession) {
+    const heard = document.createElement('button');
+    heard.type = 'button';
+    heard.className = 'kchip kchip-heard';
+    heard.textContent = `heard in ${memSession} ×`;
+    heard.title = 'Show everything again';
+    heard.addEventListener('click', () => { memSession = null; renderField(); renderLegend(); });
+    host.append(heard);
+  }
+
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'kchip';
+  all.textContent = 'All';
+  all.setAttribute('aria-pressed', String(memKinds.size === 0));
+  all.addEventListener('click', () => { memKinds.clear(); memSession = null; renderField(); renderLegend(); });
+  host.append(all);
+
+  for (const k of [...new Set(memories.map((m) => m.kind).filter(Boolean))].sort()) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `kchip tag ${kindClass(k)}`;
+    b.textContent = k;
+    b.setAttribute('aria-pressed', String(memKinds.has(k)));
+    b.addEventListener('click', () => {
+      if (memKinds.has(k)) memKinds.delete(k); else memKinds.add(k);
+      renderField();
+      renderLegend();
+    });
+    host.append(b);
+  }
+
+  const notes = document.createElement('span');
+  notes.className = 'kchip kchip-note';
+  notes.textContent = 'Notes are hollow';
+  host.append(notes);
+}
+
+const tileLabel = (ref, text) => (ref ? `${ref} · ${text}` : text);
+
+const mostRecent = (items) => {
+  const days = items.map((x) => dateOnly(x.createdAt)).filter(Boolean).sort();
+  return days.length ? days[days.length - 1] : '';
+};
+
+function sessionList() {
+  const map = new Map();
+  for (const m of memories) {
+    const id = m.source?.session;
+    if (!id) continue;
+    map.set(id, (map.get(id) || 0) + 1);
+  }
+  return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function factTile(m) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `tile ${kindClass(m.kind)}`;
+  const uses = Number(m.uses) || 0;
+  b.style.setProperty('--uses', String(Math.min(1, 0.38 + uses * 0.15)));
+  b.dataset.ref = m.ref;
+  b.setAttribute('aria-pressed', String(!!selectedMemory && selectedMemory.ref === m.ref));
+  b.setAttribute('aria-label', tileLabel(m.ref, m.text));
+  b.title = tileLabel(m.ref, m.text);
+  b.addEventListener('click', () => {
+    selectedMemory = m;
+    selectedInput = null;
+    selectedTrace = null;
+    selectedCore = null;
+    markSelected();
+    renderRecordBar();
+    renderQuestions();
+  });
+  return b;
+}
+
+function coreTile(p) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'tile core';
+  b.dataset.core = p.id;
+  b.setAttribute('aria-pressed', String(!!selectedCore && selectedCore.id === p.id));
+  b.setAttribute('aria-label', `${p.name} — ${p.core}`);
+  b.title = `${p.name} · ${p.core}`;
+  b.textContent = String(p.name || '?').trim().slice(0, 1).toUpperCase();
+  b.addEventListener('click', () => {
+    selectedCore = p;
+    selectedMemory = null;
+    selectedInput = null;
+    selectedTrace = null;
+    markSelected();
+    renderRecordBar();
+    renderQuestions();
+  });
+  return b;
+}
+
+function noteTile(x) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'tile note';
+  b.dataset.note = x.id;
+  b.setAttribute('aria-pressed', String(!!selectedInput && selectedInput.id === x.id));
+  b.setAttribute('aria-label', tileLabel(x.id, x.text));
+  b.title = tileLabel(x.id, x.text);
+  b.addEventListener('click', () => {
+    selectedInput = x;
+    selectedMemory = null;
+    selectedTrace = null;
+    selectedCore = null;
+    markSelected();
+    renderRecordBar();
+    renderQuestions();
+  });
+  return b;
+}
+
+function markSelected() {
+  for (const t of document.querySelectorAll('#field-body .tile')) {
+    const on = (selectedMemory && t.dataset.ref === selectedMemory.ref)
+      || (selectedInput && t.dataset.note === selectedInput.id)
+      || (selectedCore && t.dataset.core === selectedCore.id);
+    t.setAttribute('aria-pressed', String(Boolean(on)));
+  }
+}
+
+function fieldRow(name, sub, tiles, cls = '', meta = '') {
+  const row = document.createElement('div');
+  row.className = `field-row ${cls}`.trim();
+  const who = document.createElement('div');
+  who.className = 'field-who';
+  const n = document.createElement('span'); n.className = 'fname'; n.textContent = name;
+  who.append(n);
+  if (sub) {
+    const s = document.createElement('span'); s.className = 'frel'; s.textContent = sub;
+    who.append(s);
+  }
+  const box = document.createElement('div');
+  box.className = 'field-tiles';
+  box.append(...tiles);
+  const tail = document.createElement('span');
+  tail.className = 'fmeta';
+  tail.textContent = meta;
+  row.append(who, box, tail);
+  return row;
+}
+
+function sessionPill(id, count) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'spill';
+  b.setAttribute('aria-pressed', String(memSession === id));
+  b.append(document.createTextNode(id));
+  const n = document.createElement('span'); n.className = 'spill-n'; n.textContent = String(count);
+  b.append(n);
+  b.title = `${count} ${count === 1 ? 'fact' : 'facts'} heard in ${id}`;
+  b.addEventListener('click', () => {
+    memSession = memSession === id ? null : id;
+    renderField();
+    renderLegend();
+  });
+  return b;
+}
+
+function renderField() {
+  const host = $('#field-body');
+  const q = memSearch.trim().toLowerCase();
+  const matches = (m) => (!q || `${m.ref || ''} ${m.text} ${m.person?.name || ''}`.toLowerCase().includes(q))
+    && (memKinds.size === 0 || memKinds.has(m.kind))
+    && (!memSession || m.source?.session === memSession);
+
+  const groups = new Map();
+  for (const m of memories) {
+    if (!matches(m)) continue;
+    const key = m.person?.id || '_none';
+    if (!groups.has(key)) {
+      groups.set(key, { name: m.person?.name || 'Miscellaneous', sub: relationOf(m.person) || '', items: [] });
+    }
+    groups.get(key).items.push(m);
+  }
+  const ordered = [...groups.values()].sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+
+  const rows = ordered.map((g) => fieldRow(
+    g.name,
+    `${g.sub ? `${g.sub} · ` : ''}${g.items.length} ${g.items.length === 1 ? 'fact' : 'facts'}`,
+    g.items.map(factTile),
+    '',
+    mostRecent(g.items),
+  ));
+
+  const cores = people.filter((p) => p.core && !q && !memSession);
+  if (cores.length) {
+    rows.push(fieldRow('Core cards', `${cores.length} ${cores.length === 1 ? 'person' : 'people'}`, cores.map(coreTile), 'core-row'));
+  }
+
+  const sessions = sessionList();
+  if (sessions.length && !q) {
+    const shown = sessions.slice(0, memSessionsOpen ? sessions.length : 6);
+    const pills = shown.map(([id, n]) => sessionPill(id, n));
+    if (sessions.length > shown.length) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'spill spill-more';
+      more.textContent = `+${sessions.length - shown.length} more`;
+      more.addEventListener('click', () => { memSessionsOpen = true; renderField(); });
+      pills.push(more);
+    }
+    rows.push(fieldRow('Recordings', `${sessions.length} saved`, pills, 'sessions-row'));
+  }
+
+  const notes = inputs.filter((x) => !q || `${x.id} ${x.text}`.toLowerCase().includes(q));
+  if (notes.length) {
+    rows.push(fieldRow(
+      'Notes',
+      `typed · ${notes.length} · no recording`,
+      notes.map(noteTile),
+      'notes-row',
+      mostRecent(notes),
+    ));
+  }
+
+  if (!rows.length) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = q || memKinds.size ? 'Nothing matches that.' : 'Nothing stored yet.';
+    host.replaceChildren(p);
+    return;
+  }
+  host.replaceChildren(...rows);
+}
+
+/* ---------- what is selected ---------- */
+
+function barHead(label, cls) {
+  const span = document.createElement('span');
+  span.className = cls === 'ok' || cls === 'none' ? `state ${cls}` : `tag ${cls}`;
+  span.textContent = label;
+  return span;
+}
+
+function renderRecordBar() {
+  const host = $('#record-bar');
+  host.replaceChildren();
+
+  if (selectedTrace) {
+    const t = selectedTrace;
+    host.append(barHead(t.grounded ? 'verified' : 'no source', t.grounded ? 'ok' : 'none'));
+    const wrap = document.createElement('div'); wrap.className = 'rb-body';
+    const q = document.createElement('p'); q.className = 'rb-text'; q.textContent = t.question;
+    const a = document.createElement('p'); a.className = 'rb-answer'; a.textContent = t.answer || 'No answer saved.';
+    const n = sourceCount(t);
+    const meta = document.createElement('span'); meta.className = 'rb-meta';
+    meta.textContent = `${n} ${n === 1 ? 'source' : 'sources'}${t.created_at ? ` · ${dateOnly(t.created_at)}` : ''}`;
+    wrap.append(q, a, meta);
+    host.append(wrap);
+    return;
+  }
+
+  if (selectedCore) {
+    const p = selectedCore;
+    host.append(barHead('core', 'task'));
+    const body = document.createElement('div'); body.className = 'rb-body';
+    const text = document.createElement('p'); text.className = 'rb-text'; text.textContent = p.core;
+    const meta = document.createElement('span'); meta.className = 'rb-meta';
+    meta.textContent = `${p.name} · the one thing to remember`;
+    body.append(text, meta);
+    host.append(body);
+    return;
+  }
+
+  if (selectedInput) {
+    const x = selectedInput;
+    host.append(barHead(x.id, 'other'));
+    const body = document.createElement('div'); body.className = 'rb-body';
+    const text = document.createElement('p'); text.className = 'rb-text'; text.textContent = x.text;
+    const meta = document.createElement('span'); meta.className = 'rb-meta';
+    meta.textContent = `typed note${x.createdAt ? ` · ${dateOnly(x.createdAt)}` : ''} · not from a recording`;
+    body.append(text, meta);
+    host.append(body);
+    return;
+  }
+
+  const m = selectedMemory;
+  if (!m) {
+    const p = document.createElement('p'); p.className = 'hint';
+    p.textContent = memories.length ? 'Pick a tile to read what was kept.' : 'Nothing stored yet.';
+    host.append(p);
+    return;
+  }
+
+  host.append(barHead(m.ref || 'fact', kindClass(m.kind)));
+  const body = document.createElement('div'); body.className = 'rb-body';
+  const text = document.createElement('p'); text.className = 'rb-text'; text.textContent = m.text;
+  const meta = document.createElement('span'); meta.className = 'rb-meta';
+  meta.textContent = [
+    m.person?.name || 'Miscellaneous',
+    dateOnly(m.createdAt),
+    m.source?.session ? `heard in ${m.source.session}` : 'no saved recording',
+    m.uses ? `used ${m.uses}×` : 'never used',
+  ].filter(Boolean).join(' · ');
+  body.append(text, meta);
+
+  if (m.source?.quote?.text) {
+    const q = document.createElement('p'); q.className = 'rb-quote';
+    q.textContent = `“${m.source.quote.text}”`;
+    body.append(q);
+  }
+  host.append(body);
+
+  if (m.source?.quote?.audioUrl) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'act'; b.textContent = 'Play';
+    b.title = 'Play the moment this was heard';
+    b.addEventListener('click', () => play({
+      url: m.source.quote.audioUrl,
+      start: Number(m.source.quote.start),
+      end: Number(m.source.quote.end),
+    }));
+    host.append(b);
+  }
+}
+
+/* ---------- recall ---------- */
+
+function renderRecall() {
+  const total = memories.length;
+  const used = memories.filter((m) => Number(m.uses) > 0).length;
+  const pct = total ? Math.round((used / total) * 100) : 0;
+  const ring = $('#recall-ring');
+  ring.style.setProperty('--pct', String(pct));
+  ring.setAttribute('aria-label', total
+    ? `${used} of ${total} facts have been used when answering`
+    : 'Nothing stored yet');
+  $('#recall-value').textContent = `${pct}%`;
+  $('#recall-note').textContent = `${used}/${total}`;
+  $('#recall-line').textContent = total
+    ? `${used} of ${total} ${total === 1 ? 'fact has' : 'facts have'} been used when answering.`
+    : 'No facts yet.';
+
+  const top = [...memories].filter((m) => Number(m.uses) > 0).sort((a, b) => b.uses - a.uses).slice(0, 3);
+  const max = top.length ? Number(top[0].uses) : 1;
+  const list = $('#recall-top');
+  if (!top.length) {
+    const li = document.createElement('li');
+    li.className = 'bar-empty';
+    li.textContent = 'Nothing has been recalled yet.';
+    list.replaceChildren(li);
+    return;
+  }
+  list.replaceChildren(...top.map((m) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.className = 'ubar-text'; name.textContent = m.text;
+    const n = document.createElement('span'); n.className = 'ubar-n'; n.textContent = `${m.uses}×`;
+    const bar = document.createElement('span'); bar.className = 'ubar';
+    bar.style.setProperty('--w', `${Math.max(12, Math.round((Number(m.uses) / max) * 100))}%`);
+    li.append(name, n, bar);
+    li.title = `${m.ref} · used ${m.uses}×`;
+    return li;
+  }));
+}
+
+/* ---------- questions ---------- */
+
+function renderQuestions() {
+  const open = traces.filter((t) => !t.grounded);
+  $('#question-count').textContent = String(open.length);
+  $('#question-count').title = open.length
+    ? `${open.length} answered without a source`
+    : 'every answer had a source';
+  $('#q-cap').textContent = open.length === 0
+    ? 'every answer had a source'
+    : `${open.length === 1 ? 'answer' : 'answers'} with no source`;
+  const list = $('#question-list');
+  if (!traces.length) {
+    const p = document.createElement('p'); p.className = 'hint';
+    p.textContent = 'No questions asked yet.';
+    list.replaceChildren(p);
+    return;
+  }
+  list.replaceChildren(...traces.slice(0, 6).map((t) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'qrow';
+    b.setAttribute('aria-pressed', String(!!selectedTrace && selectedTrace.id === t.id));
+    const q = document.createElement('span'); q.className = 'qtext'; q.textContent = t.question;
+    const s = document.createElement('span');
+    s.className = `state ${t.grounded ? 'ok' : 'none'}`;
+    s.textContent = t.grounded ? 'source' : 'none';
+    b.append(q, s);
+    b.addEventListener('click', () => {
+      selectedTrace = t;
+      selectedMemory = null;
+      selectedInput = null;
+      selectedCore = null;
+      markSelected();
+      renderRecordBar();
+      renderQuestions();
+    });
+    li.append(b);
+    return li;
+  }));
+}
+
+/* ---------- on this mac ---------- */
+
+function renderMachine() {
+  const rows = [
+    ['Facts', String(memories.length)],
+    ['Recordings', String(sessionCount(memories))],
+    ['Notes', String(inputs.length)],
+    ['People', String(people.length)],
+    ['Questions', String(traces.length)],
+    ['Memory server', memOffline ? 'not running' : 'local'],
+  ];
+  const list = $('#machine-list');
+  list.replaceChildren(...rows.map(([k, v]) => {
+    const li = document.createElement('li');
+    const key = document.createElement('span'); key.textContent = k;
+    const val = document.createElement('span'); val.className = 'mv'; val.textContent = v;
+    if (k === 'Memory server' && memOffline) val.dataset.ok = 'false';
+    li.append(key, val);
+    return li;
+  }));
+}
+
+/* ---------- last two weeks ---------- */
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const localDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+function dayKeyOf(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso));
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  return localDay(d);
+}
+
+function renderActivity() {
+  const buckets = new Map();
+  const bump = (iso, field) => {
+    const k = dayKeyOf(iso);
+    if (!k) return;
+    if (!buckets.has(k)) buckets.set(k, { facts: 0, notes: 0, asks: 0 });
+    buckets.get(k)[field] += 1;
+  };
+  for (const m of memories) bump(m.createdAt, 'facts');
+  for (const x of inputs) bump(x.createdAt, 'notes');
+  for (const t of traces) bump(t.created_at, 'asks');
+
+  const host = $('#activity');
+  const today = new Date();
+  const cols = [];
+  let recent = 0;
+  for (let i = 13; i >= 0; i -= 1) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const key = localDay(d);
+    const b = buckets.get(key) || { facts: 0, notes: 0, asks: 0 };
+    recent += b.facts + b.notes + b.asks;
+    const col = document.createElement('div');
+    col.className = 'day';
+    const dots = document.createElement('div');
+    dots.className = 'day-dots';
+    // At most five dots per day; the rest become one "+n" mark so a busy day
+    // cannot push the strip out of its panel.
+    const kinds = [
+      ...Array.from({ length: b.facts }, () => 'fact'),
+      ...Array.from({ length: b.notes }, () => 'note'),
+      ...Array.from({ length: b.asks }, () => 'ask'),
+    ];
+    for (const cls of kinds.slice(0, 5)) {
+      const s = document.createElement('span');
+      s.className = `dot ${cls}`;
+      dots.append(s);
+    }
+    if (kinds.length > 5) {
+      const more = document.createElement('span');
+      more.className = 'dot more';
+      more.textContent = `+${kinds.length - 5}`;
+      dots.append(more);
+    }
+    if (!kinds.length) {
+      const quiet = document.createElement('span');
+      quiet.className = 'dot none';
+      dots.append(quiet);
+    }
+    const label = document.createElement('span');
+    label.className = 'day-label';
+    label.textContent = i === 0 ? 'today' : String(d.getDate());
+    col.append(dots, label);
+    const parts = [
+      b.facts ? `${b.facts} ${b.facts === 1 ? 'fact' : 'facts'}` : '',
+      b.notes ? `${b.notes} ${b.notes === 1 ? 'note' : 'notes'}` : '',
+      b.asks ? `${b.asks} ${b.asks === 1 ? 'question' : 'questions'}` : '',
+    ].filter(Boolean);
+    col.title = `${key} · ${parts.length ? parts.join(', ') : 'nothing'}`;
+    cols.push(col);
+  }
+  host.replaceChildren(...cols);
+  $('#activity-note').textContent = recent ? 'one dot, one thing kept' : 'nothing in the last two weeks';
+}
+
+$('#field-search').addEventListener('input', (e) => { memSearch = e.target.value; renderField(); });
 
 // ---------- conversation ----------
 function addTurn(kind, text) {
@@ -710,7 +1008,8 @@ function paintAnswer(turn, answer) {
 function ask(question) {
   const q = String(question || '').trim();
   if (!q) return;
-  show('chat');
+  setMode('ask');
+  show('capture');
   addTurn('user', q);
   const turn = addTurn('pebble', '…');
   turn.classList.add('pending');
@@ -722,6 +1021,8 @@ function ask(question) {
 }
 
 api.onAskAnswer((answer) => {
+  setMode('ask');
+  show('capture');
   if (pendingTurn) { paintAnswer(pendingTurn, answer); pendingTurn = null; return; }
   addTurn('user', answer.question);
   paintAnswer(addTurn('pebble', ''), answer);
@@ -737,401 +1038,22 @@ $('#ask-form').addEventListener('submit', (event) => {
 });
 for (const s of document.querySelectorAll('.suggest')) s.addEventListener('click', () => ask(s.textContent));
 
-$('#mic-btn').addEventListener('click', async () => {
-  show('chat');
-  const asking = snap?.ask?.phase && snap.ask.phase !== 'idle';
-  if (asking) { await api.stopAskListening(); return; }
-  const r = await api.startAskListening();
-  if (!r.ok) addTurn('pebble', r.error);
-});
+function renderAskState(state = {}) {
+  const heard = $('#ask-heard');
+  heard.hidden = !state.question || state.phase === 'idle';
+  heard.textContent = state.question ? `You asked: ${state.question}` : '';
+}
 api.onAskState((state) => {
-  const listening = state?.phase === 'starting' || state?.phase === 'listening';
-  $('#mic-btn').dataset.listening = String(!!listening);
+  if (snap) snap.ask = state;
+  if (state?.phase === 'starting') { setMode('ask'); show('capture'); }
+  renderAskState(state);
+  renderMode();
   if (state?.error) addTurn('pebble', state.error);
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { api.stopSpeaking(); player.pause(); }
 });
-
-
-// ---------- atlas: the whole memory as a map ----------
-// Only stored relationships are drawn: fact → person, fact → session, person ↔ person.
-// Raw inputs are deliberately NOT wired to anything — they are memories with no recorded session.
-const ATLAS_CAP = 6;      // facts a person shows before the rest fold into a count
-const ATLAS_BUDGET = 40;  // facts drawn at once, so a large memory still reads at a glance
-const atlasExpanded = new Set();
-
-async function loadAtlas() {
-  const [p, m, i] = await Promise.all([api.people(), api.memories(), api.inputs()]);
-  if (p.ok) people = p.value.people || [];
-  if (m.ok) memories = m.value.memories || [];
-  if (i.ok) inputs = i.value.inputs || [];
-  drawAtlas();
-}
-
-let atlasTip = null;
-function showTip(text, evt) {
-  const canvas = $('#atlas-canvas');
-  if (!canvas || !text) return;
-  if (!atlasTip) {
-    atlasTip = document.createElement('div');
-    atlasTip.className = 'atlas-tip';
-    canvas.append(atlasTip);
-  }
-  atlasTip.textContent = text;
-  atlasTip.hidden = false;
-  const box = canvas.getBoundingClientRect();
-  const x = Math.min(evt.clientX - box.left + 12, box.width - 250);
-  const y = Math.min(evt.clientY - box.top + 14, box.height - 56);
-  atlasTip.style.left = `${Math.max(4, x)}px`;
-  atlasTip.style.top = `${Math.max(4, y)}px`;
-}
-function hideTip() { if (atlasTip) atlasTip.hidden = true; }
-
-function drawAtlas() {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = $('#atlas-svg');
-  svg.replaceChildren();
-  $('#raw-count').textContent = String(inputs.length);
-
-  const el = (tag, attrs = {}, text) => {
-    const n = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (text != null) n.textContent = text;
-    return n;
-  };
-
-  const sessionCount = new Set(memories.map((m) => m.source?.session).filter(Boolean)).size;
-  $('#atlas-summary').textContent = `${people.length} people · ${memories.length} facts · ${sessionCount} sessions · ${inputs.length} raw inputs`;
-
-  if (!memories.length && !people.length) {
-    svg.append(el('text', { x: 500, y: 360, class: 'a-empty' }, 'Nothing mapped yet. Record something, then dock.'));
-    return;
-  }
-
-  const W = 1000, H = 720, CX = 500, CY = 350;
-
-  // People are hubs; a fact with no person lands in an "Unsorted" hub.
-  const byPerson = new Map();
-  for (const m of memories) {
-    const id = m.person?.id || '_none';
-    if (!byPerson.has(id)) byPerson.set(id, { id, name: m.person?.name || 'Unsorted', facts: [] });
-    byPerson.get(id).facts.push(m);
-  }
-  for (const person of people) {
-    if (!byPerson.has(person.id)) byPerson.set(person.id, { id: person.id, name: person.name, facts: [] });
-  }
-  const hubs = [...byPerson.values()].map((h) => ({
-    ...h,
-    person: people.find((p) => p.id === h.id) || null,
-    facts: [...h.facts].sort((a, b) => String(a.ref).localeCompare(String(b.ref))),
-  })).sort((a, b) => b.facts.length - a.facts.length || a.name.localeCompare(b.name));
-
-  const n = Math.max(hubs.length, 1);
-  // People sit on a ring that widens with the crowd, so names stay apart.
-  const R = n === 1 ? 0 : Math.min(215, 118 + n * 7);
-  hubs.forEach((h, i) => {
-    const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
-    h.ang = a;
-    h.x = CX + Math.cos(a) * R;
-    h.y = CY + Math.sin(a) * R;
-  });
-
-  // What the map draws: people you opened, small groups, then a fixed budget of facts.
-  // A fact that is not drawn is never given a stray line or an orphan session.
-  let budget = ATLAS_BUDGET;
-  for (const h of hubs) {
-    h.open = atlasExpanded.has(h.id) || h.facts.length <= ATLAS_CAP;
-    if (h.open) budget -= h.facts.length;
-  }
-  for (const h of hubs) {
-    if (h.open || h.facts.length > budget) continue;
-    h.open = true;
-    budget -= h.facts.length;
-  }
-
-  const factNodes = [];
-  for (const h of hubs) {
-    if (!h.open) continue;
-    h.facts.forEach((f, i) => {
-      const a = h.ang + (i - (h.facts.length - 1) / 2) * 0.30;
-      factNodes.push({ f, hub: h, x: h.x + Math.cos(a) * 84, y: h.y + Math.sin(a) * 84 });
-    });
-  }
-
-  // A large memory is drawn in part; say so rather than imply the map is complete.
-  if (factNodes.length < memories.length) {
-    $('#atlas-summary').textContent += ` · showing ${factNodes.length} facts`;
-  }
-
-  // Sessions sit on an outer ring, at the average direction of their facts.
-  const sessionMap = new Map();
-  for (const node of factNodes) {
-    const id = node.f.source?.session;
-    if (!id) continue;
-    if (!sessionMap.has(id)) sessionMap.set(id, { id, facts: [] });
-    sessionMap.get(id).facts.push(node);
-  }
-  const SESSION_R = 322;
-  const sessionNodes = [...sessionMap.values()].sort((a, b) => a.id.localeCompare(b.id));
-  for (const s of sessionNodes) {
-    const mx = s.facts.reduce((t, f) => t + f.x, 0) / s.facts.length;
-    const my = s.facts.reduce((t, f) => t + f.y, 0) / s.facts.length;
-    s.dir = Math.atan2(my - CY, mx - CX);
-    s.label = s.id.length > 16 ? `${s.id.slice(0, 15)}…` : s.id;
-    s.w = Math.max(54, s.label.length * 6.4 + 16);
-  }
-
-  // Session pills keep their stored direction unless that would stack them:
-  // nudge each one past the previous, and spread evenly once the ring is full.
-  const ring = [...sessionNodes].sort((a, b) => a.dir - b.dir);
-  const sep = (s) => Math.min(0.60, (s.w + 18) / SESSION_R);
-  const need = ring.reduce((t, s) => t + sep(s), 0);
-  if (need >= Math.PI * 2 * 0.94) {
-    const step = (Math.PI * 2) / Math.max(ring.length, 1);
-    ring.forEach((s, i) => { s.dir = -Math.PI / 2 + i * step; });
-  } else {
-    for (let i = 1; i < ring.length; i++) {
-      const min = ring[i - 1].dir + sep(ring[i - 1]);
-      if (ring[i].dir < min) ring[i].dir = min;
-    }
-    const wrap = ring.length ? ring[ring.length - 1].dir - (ring[0].dir + Math.PI * 2 - sep(ring[ring.length - 1])) : 0;
-    if (wrap > 0) for (const s of ring) s.dir -= wrap;
-  }
-  for (const s of sessionNodes) {
-    s.x = CX + Math.cos(s.dir) * SESSION_R;
-    s.y = CY + Math.sin(s.dir) * SESSION_R;
-  }
-
-  const edges = [];
-
-  // fact → session (drawn first so it sits behind the nodes)
-  for (const s of sessionNodes) {
-    for (const f of s.facts) {
-      const ctrl = [(f.x + s.x) / 2, (f.y + s.y) / 2];
-      const path = el('path', { class: 'a-edge', d: `M ${f.x} ${f.y} Q ${ctrl[0]} ${ctrl[1]} ${s.x} ${s.y}` });
-      svg.append(path);
-      edges.push({ path, a: f.f.ref, b: `s:${s.id}` });
-    }
-  }
-
-  // person ↔ person
-  for (const rel of relations) {
-    const A = hubs.find((h) => h.id === rel.a), B = hubs.find((h) => h.id === rel.b);
-    if (!A || !B) continue;
-    const path = el('path', { class: 'a-edge rel', d: `M ${A.x} ${A.y} L ${B.x} ${B.y}` });
-    svg.append(path);
-    edges.push({ path, a: `p:${A.id}`, b: `p:${B.id}` });
-  }
-
-  // person → fact, only for facts that are actually drawn
-  const shownFacts = factNodes;
-  for (const node of shownFacts) {
-    const path = el('path', { class: 'a-edge', d: `M ${node.hub.x} ${node.hub.y} L ${node.x} ${node.y}` });
-    svg.append(path);
-    edges.push({ path, a: `p:${node.hub.id}`, b: node.f.ref });
-  }
-
-  // A busy map keeps its lines faint until something is hovered.
-  svg.dataset.busy = String(edges.length > 80);
-
-  const hot = (key) => {
-    for (const e of edges) {
-      if (e.a === key || e.b === key) e.path.classList.add('hot');
-      else e.path.classList.remove('hot');
-    }
-  };
-  const cold = () => { for (const e of edges) e.path.classList.remove('hot'); };
-
-  const bind = (g, key, onClick, title) => {
-    g.addEventListener('mouseenter', (e) => { hot(key); showTip(title, e); });
-    g.addEventListener('mousemove', (e) => showTip(title, e));
-    g.addEventListener('mouseleave', () => { cold(); hideTip(); });
-    g.addEventListener('click', onClick);
-    if (title) {
-      g.setAttribute('tabindex', '0');
-      g.setAttribute('role', 'button');
-      g.setAttribute('aria-label', title);
-      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } });
-    }
-    svg.append(g);
-    return g;
-  };
-
-  // people
-  for (const h of hubs) {
-    const g = el('g', { class: `a-node a-person${h.id === '_none' ? ' unsorted' : ''}` });
-    g.append(el('circle', { cx: h.x, cy: h.y, r: 22 }));
-    g.append(el('text', { x: h.x, y: h.y + 38 }, h.name));
-    const collapsed = !h.open;
-    bind(g, `p:${h.id}`, () => {
-      if (collapsed) { atlasExpanded.add(h.id); drawAtlas(); }
-      else openPersonSheet(h);
-    }, collapsed ? `${h.name} — open ${h.facts.length} facts` : `${h.name} — ${h.facts.length} facts`);
-
-    if (collapsed) {
-      // The count sits under the name, so it is obvious whose facts are folded away.
-      const cx = h.x, cy = h.y + 58;
-      const badge = el('g', { class: 'a-node a-count' });
-      badge.append(el('rect', { x: cx - 30, y: cy - 11, width: 60, height: 22, rx: 11 }));
-      badge.append(el('text', { x: cx, y: cy + 4 }, `${h.facts.length} facts`));
-      bind(badge, `p:${h.id}`, () => { atlasExpanded.add(h.id); drawAtlas(); },
-        `Open the ${h.facts.length} facts stored for ${h.name}`);
-    }
-  }
-
-  // facts: hover for the sentence, click for the whole record
-  for (const node of shownFacts) {
-    const g = el('g', { class: 'a-node a-fact' });
-    g.append(el('circle', { cx: node.x, cy: node.y, r: 6.5 }));
-    bind(g, node.f.ref, () => openFactSheet(node.f), `${node.f.text} — ${node.hub.name}`);
-  }
-
-  // sessions
-  for (const s of sessionNodes) {
-    const g = el('g', { class: 'a-node a-session' });
-    g.append(el('rect', { x: s.x - s.w / 2, y: s.y - 11, width: s.w, height: 22, rx: 6 }));
-    g.append(el('text', { x: s.x, y: s.y + 4 }, s.label));
-    bind(g, `s:${s.id}`, () => openSessionSheet(s), `Session ${s.id} — ${s.facts.length} facts`);
-  }
-}
-
-// ---------- atlas sheet ----------
-function closeSheet() {
-  const sheet = $('#atlas-sheet');
-  sheet.hidden = true;
-  sheet.replaceChildren();
-}
-
-function sheetChip(text, cls = 'other') {
-  const s = document.createElement('span');
-  s.className = `tag ${cls}`;
-  s.textContent = text;
-  return s;
-}
-
-function sheetText(text, cls) {
-  const p = document.createElement('p');
-  if (cls) p.className = cls;
-  p.textContent = text;
-  return p;
-}
-
-function factList(facts, onPick) {
-  const ul = document.createElement('ul');
-  ul.className = 'sheet-list';
-  for (const f of facts) {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    const ref = document.createElement('span');
-    ref.className = 'ref';
-    ref.textContent = f.ref;
-    b.append(ref, document.createTextNode(f.text));
-    b.addEventListener('click', () => onPick(f));
-    li.append(b);
-    ul.append(li);
-  }
-  return ul;
-}
-
-function openSheet(title, meta, body) {
-  const sheet = $('#atlas-sheet');
-  sheet.replaceChildren();
-  const head = document.createElement('div');
-  head.className = 'sheet-head';
-  const h = document.createElement('h3');
-  h.textContent = title;
-  const close = document.createElement('button');
-  close.type = 'button'; close.className = 'act'; close.textContent = 'Close';
-  close.addEventListener('click', closeSheet);
-  head.append(h, close);
-  sheet.append(head);
-  if (meta.length) {
-    const m = document.createElement('div');
-    m.className = 'sheet-meta';
-    m.append(...meta);
-    sheet.append(m);
-  }
-  const bodyEl = document.createElement('div');
-  bodyEl.className = 'sheet-body';
-  bodyEl.append(...body);
-  sheet.append(bodyEl);
-  sheet.hidden = false;
-  sheet.scrollTop = 0;
-}
-
-function openFactSheet(m) {
-  const meta = [sheetChip(m.person?.name || 'Unsorted'), sheetChip(m.kind, kindClass(m.kind)), sheetChip(m.origin || 'extracted')];
-  if (m.createdAt) meta.push(sheetChip(dateOnly(m.createdAt)));
-  if (m.uses) meta.push(sheetChip(`${m.uses} uses`));
-  const body = [sheetText(m.text)];
-  body.push(m.source?.quote?.text
-    ? sheetText(`“${m.source.quote.text}”`, 'q')
-    : sheetText('No spoken quote was saved for this fact.'));
-  if (m.source?.quote?.audioUrl) {
-    const playBtn = document.createElement('button');
-    playBtn.type = 'button'; playBtn.className = 'act'; playBtn.textContent = 'Play the moment';
-    playBtn.addEventListener('click', () => play({
-      url: m.source.quote.audioUrl,
-      start: Number(m.source.quote.start),
-      end: Number(m.source.quote.end),
-    }));
-    body.push(playBtn);
-  }
-  openSheet(`${m.ref} · ${m.text}`, meta, body);
-}
-
-function openPersonSheet(h) {
-  const p = h.person;
-  const meta = [sheetChip(p && (p.owner ?? p.is_owner) ? 'You' : (p?.relation || relationOf(p || { id: h.id, name: h.name })) || 'Relation unknown')];
-  meta.push(sheetChip(`${h.facts.length} ${h.facts.length === 1 ? 'fact' : 'facts'}`));
-  if (p?.voiceSamples) meta.push(sheetChip('voice known'));
-  const body = [];
-  body.push(sheetText(p?.core || `${h.name} has no core memory card yet.`));
-  if (h.facts.length) body.push(factList(h.facts, openFactSheet));
-  openSheet(h.name, meta, body);
-}
-
-function openSessionSheet(s) {
-  const meta = [sheetChip(`${s.facts.length} ${s.facts.length === 1 ? 'fact' : 'facts'}`), sheetChip('recorded session')];
-  const body = [sheetText('These facts were heard in this recording. Every link here comes from the session saved on the fact.')];
-  body.push(factList(s.facts.map((f) => f.f), openFactSheet));
-  openSheet(`Session ${s.id}`, meta, body);
-}
-
-function openInputSheet(x) {
-  const meta = [sheetChip(x.id), sheetChip(dateOnly(x.createdAt))];
-  openSheet(`Input ${x.id}`, meta, [sheetText(x.text), sheetText('This is a typed input. Memory holds no session for it, so it is not linked to any fact.')]);
-}
-
-function openRawSheet() {
-  const meta = [sheetChip(`${inputs.length} inputs`), sheetChip('not linked to sessions')];
-  const body = [sheetText('Typed inputs are memories in their own right. Nothing in the data says they came from a recorded session, so they are not connected to one here.')];
-  if (!inputs.length) body.push(sheetText('No raw inputs stored yet.'));
-  else {
-    const ul = document.createElement('ul');
-    ul.className = 'sheet-list';
-    for (const x of inputs.slice(0, 120)) {
-      const li = document.createElement('li');
-      const b = document.createElement('button');
-      b.type = 'button';
-      const ref = document.createElement('span');
-      ref.className = 'ref';
-      ref.textContent = x.id;
-      b.append(ref, document.createTextNode(x.text.length > 90 ? `${x.text.slice(0, 89)}…` : x.text));
-      b.addEventListener('click', () => openInputSheet(x));
-      li.append(b);
-      ul.append(li);
-    }
-    body.push(ul);
-  }
-  openSheet('Raw inputs', meta, body);
-}
-
-$('#raw-group').addEventListener('click', openRawSheet);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 
 setMode('record');

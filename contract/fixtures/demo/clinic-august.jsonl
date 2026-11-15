@@ -1,0 +1,7 @@
+{"type":"session_start","session":"demo-clinic-aug","startedAt":"2026-08-14T14:30:00Z","place":"Dr. Patel's clinic"}
+{"type":"utterance","session":"demo-clinic-aug","id":"demo-clinic-aug#0001","speaker":"S1","start":0,"end":3.4,"text":"Come in, sit down. Your blood test is back.","audio":"data/audio/demo-clinic-aug.wav"}
+{"type":"utterance","session":"demo-clinic-aug","id":"demo-clinic-aug#0002","speaker":"S1","start":3.7,"end":9.2,"text":"You have type two diabetes. It is mild, and it is manageable.","audio":"data/audio/demo-clinic-aug.wav"}
+{"type":"utterance","session":"demo-clinic-aug","id":"demo-clinic-aug#0003","speaker":"S1","start":9.5,"end":15.0,"text":"Walk for thirty minutes every morning before breakfast, and keep sugar out of your drinks.","audio":"data/audio/demo-clinic-aug.wav"}
+{"type":"utterance","session":"demo-clinic-aug","id":"demo-clinic-aug#0004","speaker":"S0","start":15.3,"end":17.0,"text":"Thirty minutes every morning. All right.","audio":"data/audio/demo-clinic-aug.wav"}
+{"type":"utterance","session":"demo-clinic-aug","id":"demo-clinic-aug#0005","speaker":"S1","start":17.3,"end":21.0,"text":"Good. We will check your blood again in three months.","audio":"data/audio/demo-clinic-aug.wav"}
+{"type":"session_end","session":"demo-clinic-aug","endedAt":"2026-08-14T14:36:00Z"}

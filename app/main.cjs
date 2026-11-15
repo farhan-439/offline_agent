@@ -2,11 +2,12 @@
 // all logic lives in core.mjs so it can be tested without Electron.
 const { app, BrowserWindow, Menu, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
-app.on('second-instance', () => { if (hub && !hub.isDestroyed()) openHub('chat'); });
+app.on('second-instance', () => { if (hub && !hub.isDestroyed()) openHub('ask'); });
 
 // kindred-capture looks for the Argmax key in the nearest .env above its working directory.
 process.chdir(__dirname);
@@ -122,6 +123,16 @@ if (primary) app.whenReady().then(async () => {
   ipcMain.handle('memory:memories', safe(() => need().memories()));
   ipcMain.handle('memory:inputs', safe(() => need().inputs()));
   ipcMain.handle('memory:traces', safe(() => need().traces()));
+  ipcMain.handle('memory:layers', safe(() => need().layers()));
+  ipcMain.handle('actions:list', safe(() => need().actionSuggestions()));
+  ipcMain.handle('actions:scan', safe(() => need().scanActionSuggestions()));
+  ipcMain.handle('actions:validate', safe((id, details) => need().validateActionSuggestion(id, details)));
+  ipcMain.handle('actions:add', safe((id, details) => need().addActionSuggestion(id, details)));
+  ipcMain.handle('actions:open-app', safe((target) => new Promise((resolve, reject) => {
+    const name = { calendar: 'Calendar', reminders: 'Reminders', notes: 'Notes', contacts: 'Contacts' }[target];
+    if (!name) return reject(new Error('Unknown Mac app.'));
+    execFile('/usr/bin/open', ['-a', name], (error) => error ? reject(error) : resolve({ opened: name }));
+  })));
   ipcMain.handle('memory:dock', safe(() => need().dock()));
   ipcMain.handle('memory:ask', safe((q) => need().ask(q)));
   ipcMain.handle('ask:listen-start', safe(() => need().startAskListening()));
@@ -140,19 +151,19 @@ if (primary) app.whenReady().then(async () => {
     Menu.buildFromTemplate([
       { label: 'Open Pebble', click: () => openHub() },
       { label: 'Memory', click: () => openHub('memory') },
-      { label: 'Chat', click: () => openHub('chat') },
+      { label: 'Ask', click: () => openHub('ask') },
       { type: 'separator' },
       { label: 'Hide pebble', click: () => orb?.hide() },
       { label: 'Quit Pebble', click: () => { quitting = true; app.quit(); } },
     ]).popup({ window: orb });
   });
-  ipcMain.handle('chat:open', () => { openChat(); return true; });
+  ipcMain.handle('chat:open', () => { openHub('ask'); return true; });
   ipcMain.handle('chat:close', () => { chat?.hide(); return true; });
 
   // The floating mark is switched off for now: Pebble lives in its own window only.
   // createOrb() / createChat() are kept for when it comes back, but nothing is placed on screen.
   await createHub();
-  globalShortcut.register('CommandOrControl+Shift+K', () => openHub('chat'));
+  globalShortcut.register('CommandOrControl+Shift+K', () => openHub('ask'));
   try {
     const [core, bridge, live] = await Promise.all([
       import(pathToFileURL(path.join(__dirname, 'core.mjs')).href),

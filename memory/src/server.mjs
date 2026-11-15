@@ -21,6 +21,8 @@ import { ingestPhoto, askPhoto, uploadPhoto } from './photos.mjs';
 import { runAction, pendingActions } from './actions.mjs';
 import { addInput, listInputs } from './inputs.mjs';
 import { listMemories, rememberMemory } from './memories.mjs';
+import { memoryLayers } from './layers.mjs';
+import { actionSuggestions, scanActionSuggestions, reserveActionSuggestion, finishActionSuggestion } from './action-suggestions.mjs';
 
 const PUBLIC = path.resolve(import.meta.dirname, '../public');
 const ROOT = path.resolve(import.meta.dirname, '../..');
@@ -115,6 +117,7 @@ export function createHandler(db, bonsai, { inbox = path.join(ROOT, 'data/inbox'
           requestedMode: mode.requested, degraded: mode.degraded, embeddings: mode.caps, detail: describeMode(mode) });
       }
       if (req.method === 'GET' && url.pathname === '/people') return send(200, peopleGraph(db));
+      if (req.method === 'GET' && url.pathname === '/layers') return send(200, memoryLayers(db));
       if (req.method === 'GET' && url.pathname === '/memories') {
         const memories = listMemories(db, {
           q: url.searchParams.get('q'),
@@ -131,6 +134,7 @@ export function createHandler(db, bonsai, { inbox = path.join(ROOT, 'data/inbox'
         return send(200, { traces });
       }
       if (req.method === 'GET' && url.pathname === '/actions') return send(200, { pending: pendingActions(db) });
+      if (req.method === 'GET' && url.pathname === '/action-suggestions') return send(200, { suggestions: actionSuggestions(db) });
       if (req.method !== 'POST') return send(404, { error: 'unknown route' });
 
       // Raw image upload: the browser cannot supply a filesystem path, so it posts the bytes.
@@ -191,6 +195,9 @@ export function createHandler(db, bonsai, { inbox = path.join(ROOT, 'data/inbox'
         return send(200, await serial(() => ingestPhoto(db, bonsai, input)));
       }
       if (url.pathname === '/memory') return send(200, { memory: await serial(() => rememberMemory(db, bonsai, input)) });
+      if (url.pathname === '/action-suggestions/scan') return send(200, await serial(() => scanActionSuggestions(db, bonsai, input)));
+      if (url.pathname === '/action-suggestions/reserve') return send(200, await serial(() => reserveActionSuggestion(db, input.id)));
+      if (url.pathname === '/action-suggestions/finish') return send(200, await serial(() => finishActionSuggestion(db, input.id, input)));
       if (url.pathname === '/action') return send(200, await serial(() => runAction(db, bonsai, input, { confirm: input.confirm === true })));
       return send(404, { error: 'unknown route' });
     } catch (error) {

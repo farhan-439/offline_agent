@@ -1,46 +1,30 @@
 # app/ — Pebble desktop app (Electron)
 
-One hub window with four screens, a floating mark, and a small chat window opened by the mark. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
+One hub window with Capture and Memory screens. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
 
 | Screen | What it does |
 |---|---|
-| **Capture** (main page) ⬅ the stone | The mark switches between **Record** and **Translate**. During Translate, the live transcript and reply controls appear below it. On stop, the session file is sent to memory `/ingest`. |
-| **Chat** | Type or speak a question with its microphone button. Answers from memory `/ask` are spoken and carry a **N sources** chip that expands to cited memories and audio. |
-| **Memory** | Four areas, all reading real endpoints — see below. Keeps **Dock today** and **My voice**. |
-| **Atlas** | The whole memory as one map: people, their facts, and the sessions they were heard in. Only stored links are drawn. |
+| **Capture** (main page) ⬅ the stone | The mark switches between **Record**, **Translate**, and **Ask**. Translate shows the live transcript and reply controls; Ask shows the recognized question, answer, and sources below the stone. On stop, a Record or Translate session is sent to memory `/ingest`. |
+| **Memory** | An Actions board in place of the graph. Bonsai proposes Calendar events, Reminders, Notes, and birthday updates from saved facts. Every proposal shows its source and needs a separate Add confirmation. Keeps **Dock today** and **My voice**. |
 | **The mark** | The five-bar mark is the button on Capture. The always-on-top floating version is **switched off for now** (`createOrb()` / `createChat()` still exist in `main.cjs`, but nothing is drawn outside the window). |
 
 ## Capture: Record, Translate, and the live transcript
 
-The Capture switch has **Record · Translate**. Chat owns Ask, including its voice button. The line under the stone reports state (`Tap to record`, `Recording · 0:14`, `Translating · 0:47`, `Saving…`). While the microphone is busy the other mode is disabled with a reason.
+The Capture switch has **Record · Translate · Ask**. In Ask, tap the stone to speak or type in the field below; the recognized words and answer appear on the same page. The line under the stone reports state (`Tap to record`, `Recording · 0:14`, `Translating · 0:47`, `Listening`, `Finding your answer…`). While the microphone is busy the other modes are disabled with a reason.
 
 In **Translate**, the page shows a live transcript under the stone: each heard line as `French: "…"` with its English underneath, and your own replies as `You replied` in the language Pebble spoke. States are named (`Listening`, `Translating`, `Listening to you`, `Speaking your reply`, `Saving`, `Saved`). Rows are keyed by translation `seq`, so a line that arrives twice with better text **replaces** rather than duplicates, and the last session stays on screen after **Stop** until a new session begins.
 
 **Record** shows only the real recording state. It does not invent a transcript, because capture does not stream text for ordinary recordings.
 
-## Memory workspace (three regions)
+## Memory: actions from recordings
 
-The layout is table-first, the way a CRM record works: a list you scan, a list you search, and one big record panel that says everything about what you picked. Not four cards of prose.
+**Dock today** extracts evidence-linked facts from recordings and starts an Actions scan. **Compile actions** scans all unexamined saved facts in batches of eight, with a Stop control between batches. Bonsai returns grammar-locked drafts; the app derives dates and clock times only from saved evidence. An ambiguous time such as “at ten” is left blank for review. A medication frequency never becomes invented clock times or a duration.
 
-| Region | Reads | Shows |
-|---|---|---|
-| **People** (top left) | `GET /people` | A table — name (with the core memory as a subtitle), relation, fact count, voice-known dot. Selecting a row filters the layers and opens the person in the record panel. |
-| **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four tabs — **Inputs**, **Evidence**, **Facts**, **Core** — as a table with `Ref · Content · Person`, colour-coded kind tags, inline search and person/type filters. |
-| **Memory map** (right, full height) | the chosen fact + `GET /traces` | A diagram in two modes. **Fact**: the person above, the fact in the middle with that person's other facts beside it, and the conversation it was heard in below — labelled `WHO / WHAT IT KNOWS / WHERE IT WAS HEARD`. **Recalls**: the question, the refs Bonsai retrieved (cited ones in moss, retrieved-only in grey), the answer, and ‹ › to step through recent recalls. The footer carries the fact's ref, date, scope, uses, the original quote and **Play**. |
+The board lists proposed and added actions on the left. Selecting one shows the saved fact, original words, and a playable clip when audio exists. Edit the details, choose **Review before adding**, then **Queue for Run**. Pebble validates the required details before queueing. **Run reviewed** shows every queued item and destination together; only the final **Run actions** click writes to Mac apps. Results appear on the board, and added items have an **Open Calendar / Reminders / Notes / Contacts** button. The exported item includes the source fact, original words, and local clip path in its notes. A failed export needs fresh review; if tracking fails after a successful export, the draft stays locked to prevent duplicates.
 
-## Atlas (the whole memory as one map)
+Calendar and Reminders use EventKit. The first Add may trigger macOS permission. Both choose an **On My Mac** local calendar/list and show a setup error if one is unavailable. Notes uses the **On My Mac** account. Contacts requires one exact matching name and an actual birth year entered by the user. Contact account sync depends on where that existing card lives.
 
-A fourth rail item, and the answer to "what is actually in here?". The map is built from stored links only — fact → person, fact → session, person ↔ person — so every line corresponds to something the database recorded.
-
-- **People** are hubs on a ring; their facts orbit them as small dots. Hover a dot for its sentence; click it for the full record (fact, person, date, the spoken quote, audio, and the session it came from).
-- **Recorded sessions** sit on the outer ring, in the direction of the facts heard in them. A session appears only when at least one of its facts is drawn, so no pill dangles at the end of a line pointing at nothing.
-- **Folding**: a person with more than six facts keeps them behind an `N facts` badge under their name. Click the badge to open them.
-- **Volume**: a memory of hundreds of facts still has to read at a glance, so small groups open in full, the rest fill a fixed budget of drawn facts, and the header says so (`· showing 48 facts`). Session pills keep their stored direction unless that would stack them, and a busy map keeps its lines faint until you hover one thing.
-- **Raw inputs stay separate.** The bottom-left card (`N · not linked to any session`) opens the list of typed inputs. They are deliberately not wired to facts or sessions: nothing in the data says a typed input came from a recording, so no line is invented to complete the picture.
-
-Nothing here is synthesised — no invented people, relationships, sessions, or citations. Every node is keyboard reachable (`Tab`, then `Enter`/`Space`), hovering names it, and `Escape` closes the record sheet.
-
-Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
+For the demo, use Leo's game for Calendar, a ladder return for Reminders, and a cough syrup schedule only after entering exact daily times, start date, and number of days. The graph and old shelf are no longer shown.
 
 ## Start everything with one command
 
@@ -70,7 +54,8 @@ Env: `KINDRED_MEMORY_URL` (default `http://127.0.0.1:8787`), `KINDRED_CAPTURE_BI
 |---|---|
 | `core.mjs` | All main-process logic (`KindredApp`): drives `CaptureBridge` (`../capture/bridge.mjs`) and `LiveWhisper` (`../capture/live.mjs`), talks to memory over HTTP. No Electron, so it can be tested. |
 | `main.cjs`, `preload.cjs` | Electron shell: window, orb, `⌘⇧K` shortcut, IPC. Adapted from local_ai (Second Nature). Windows are sandboxed, navigation and permission requests are denied, and the CSP blocks network access from the page. |
-| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
+| `index.html`, `renderer.js`, `renderer.css`, `actions.mjs`, `actions.css`, `view.mjs` | Hub UI: capture modes, chat, and the Actions board. Focus rings, screen-reader labels, reduced motion, and a narrow-window layout. |
+| `native-actions.mjs`, `native/` | Reviewed local export to EventKit and Contacts, plus Notes AppleScript. |
 | `orb.html`, `orb.js`, `orb.css` | The floating mark and its sub-button island. |
 | `mark.mjs`, `mark.css` | The mark: one geometry source (five sage bars) and its motion — still at rest, the voice wave while listening, recording or translating. |
 

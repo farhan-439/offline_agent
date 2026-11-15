@@ -1,0 +1,6 @@
+{"type":"session_start","session":"demo-rosa","startedAt":"2026-11-14T19:30:00Z","place":"library book club"}
+{"type":"utterance","session":"demo-rosa","id":"demo-rosa#0001","speaker":"S1","start":0,"end":3.1,"text":"It's Rosa. Did you finish The Remains of the Day?","audio":"data/audio/demo-rosa.wav"}
+{"type":"utterance","session":"demo-rosa","id":"demo-rosa#0002","speaker":"S0","start":3.4,"end":5.0,"text":"Almost, I have two chapters left.","audio":"data/audio/demo-rosa.wav"}
+{"type":"utterance","session":"demo-rosa","id":"demo-rosa#0003","speaker":"S1","start":5.3,"end":9.6,"text":"Our next meeting is December second at the library, and it's my birthday on November twentieth.","audio":"data/audio/demo-rosa.wav"}
+{"type":"utterance","session":"demo-rosa","id":"demo-rosa#0004","speaker":"S1","start":9.9,"end":12.4,"text":"I'm allergic to lilies, so no lilies please!","audio":"data/audio/demo-rosa.wav"}
+{"type":"session_end","session":"demo-rosa","endedAt":"2026-11-14T19:31:00Z"}

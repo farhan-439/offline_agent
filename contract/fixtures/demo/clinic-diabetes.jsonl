@@ -1,0 +1,6 @@
+{"type":"session_start","session":"demo-clinic-2","startedAt":"2026-11-12T15:10:00Z","place":"Dr. Patel's clinic"}
+{"type":"utterance","session":"demo-clinic-2","id":"demo-clinic-2#0001","speaker":"S1","start":0,"end":3.2,"text":"Hello again, it's Doctor Patel. Your sugar test came back a little high.","audio":"data/audio/demo-clinic-2.wav"}
+{"type":"utterance","session":"demo-clinic-2","id":"demo-clinic-2#0002","speaker":"S1","start":3.5,"end":8.0,"text":"You have type two diabetes now. If you get a cough, always buy sugar-free syrup.","audio":"data/audio/demo-clinic-2.wav"}
+{"type":"utterance","session":"demo-clinic-2","id":"demo-clinic-2#0003","speaker":"S0","start":8.3,"end":9.6,"text":"Sugar-free syrup. Okay, I will remember.","audio":"data/audio/demo-clinic-2.wav"}
+{"type":"utterance","session":"demo-clinic-2","id":"demo-clinic-2#0004","speaker":"S1","start":9.9,"end":13.4,"text":"And please walk for thirty minutes every morning before breakfast.","audio":"data/audio/demo-clinic-2.wav"}
+{"type":"session_end","session":"demo-clinic-2","endedAt":"2026-11-12T15:11:00Z"}
