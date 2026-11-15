@@ -13,7 +13,7 @@ mountMark($('#mic-mark'), 26);
 mountMark($('#stone-mark'), 124);
 
 let snap = null;
-let mode = 'record';           // 'record' | 'ask' | 'translate' — what the stone does when tapped
+let mode = 'record';           // 'record' | 'translate' — what the stone does when tapped
 let ownerVoiceKnown = false;
 let pendingTurn = null;
 let lastAnswer = '';
@@ -45,7 +45,6 @@ function show(view) {
   if (view === 'memory') loadMemory();
   if (view === 'atlas') loadAtlas();
   if (view === 'chat') $('#ask-input').focus();
-  if (view === 'capture' && mode === 'ask') $('#quick-input').focus();
 }
 for (const nav of document.querySelectorAll('.nav')) nav.addEventListener('click', () => show(nav.dataset.view));
 api.onNavigate((view) => show(typeof view === 'string' ? view : 'capture'));
@@ -55,8 +54,6 @@ function setMode(next) {
   mode = next;
   app.dataset.mode = mode;
   for (const b of document.querySelectorAll('.mode')) b.setAttribute('aria-selected', String(b.dataset.mode === mode));
-  $('#ask-panel').hidden = mode !== 'ask';
-  if (mode === 'ask') $('#quick-input').focus();
   renderMode();
 }
 for (const b of document.querySelectorAll('.mode')) b.addEventListener('click', () => setMode(b.dataset.mode));
@@ -77,8 +74,7 @@ function renderMode() {
   const translating = rec.mode === 'translate' && busy;
 
   const line = $('#mode-line');
-  if (shown === 'ask') line.textContent = 'Type a question, or speak it';
-  else if (shown === 'translate') line.textContent = translating ? `Translating${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
+  if (shown === 'translate') line.textContent = translating ? `Translating${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to translate';
   else line.textContent = capturing(rec) ? `Recording${clock(rec)}` : rec.phase === 'processing' ? 'Saving…' : 'Tap to record';
 
   const enrolling = rec.mode === 'enroll' && rec.phase !== 'idle';
@@ -104,7 +100,6 @@ $('#record-btn').addEventListener('click', async () => {
   const phase = snap?.recording?.phase || 'idle';
   if (phase === 'starting' || phase === 'recording') { await api.stopRecording(); return; }
   if (phase === 'processing') return;
-  if (mode === 'ask') { $('#quick-input').focus(); return; }
   const r = await api.startRecording(mode === 'translate' ? { mode: 'translate' } : {});
   if (!r.ok) result(r.error);
 });
@@ -144,6 +139,7 @@ function result(text) { $('#record-result').hidden = !text; $('#record-result').
 // ---------- live transcript (Translate) ----------
 function renderLive(rec) {
   const translating = rec.mode === 'translate';
+  renderReplyControls(rec);
   if (!translating && liveRows.size === 0) { $('#live-panel').hidden = true; return; }
 
   // A new session starts clean; the last session stays visible after Stop.
@@ -198,6 +194,44 @@ function renderLive(rec) {
   }));
   list.scrollTop = list.scrollHeight;
 }
+
+function renderReplyControls(rec) {
+  const active = rec.mode === 'translate' && rec.phase === 'recording';
+  $('#reply-controls').hidden = !active;
+  if (!active) return;
+  const phase = rec.reply?.phase || 'idle';
+  const target = rec.replyTargetOverride || [...(rec.translations || [])].reverse().map((t) => ['es', 'fr', 'de', 'zh'].includes(t.language?.split('-')[0]) ? t.language.split('-')[0] : null).find(Boolean);
+  const selector = $('#reply-language');
+  selector.value = rec.replyTargetOverride || 'auto';
+  selector.disabled = phase !== 'idle';
+  const voice = $('#reply-voice');
+  voice.textContent = phase === 'listening' ? 'Done speaking' : `Speak reply${target ? ` in ${languageName(target)}` : ''}`;
+  voice.disabled = !['idle', 'listening'].includes(phase);
+  $('#reply-text').disabled = phase !== 'idle';
+  $('#reply-send').disabled = phase !== 'idle';
+  const status = $('#reply-status');
+  const line = rec.reply?.error || ({ listening: 'Speak in English, then press Done speaking.', transcribing: 'Writing down your reply…', translating: 'Bonsai is translating…', speaking: 'Argmax is speaking your reply…' }[phase] || (!target ? 'Choose a language, or say “Translate this to Spanish: …”.' : 'Speak or type in English. Pebble says it in the selected language.'));
+  status.hidden = !line;
+  status.textContent = line;
+}
+
+$('#reply-language').addEventListener('change', async (event) => {
+  const r = await api.setReplyLanguage(event.target.value);
+  if (!r.ok) { $('#reply-status').hidden = false; $('#reply-status').textContent = r.error; }
+});
+$('#reply-voice').addEventListener('click', async () => {
+  const r = snap?.recording?.reply?.phase === 'listening' ? await api.stopReply() : await api.startReply();
+  if (!r.ok) { $('#reply-status').hidden = false; $('#reply-status').textContent = r.error; }
+});
+$('#reply-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = $('#reply-text');
+  const text = input.value.trim();
+  if (!text) return;
+  const r = await api.sendTypedReply(text);
+  if (r.ok) input.value = '';
+  else { $('#reply-status').hidden = false; $('#reply-status').textContent = r.error; }
+});
 
 // ---------- your voice ----------
 function renderEnroll(recording, capture) {
@@ -269,7 +303,8 @@ function fillFilters() {
   const keep = ps.value;
   ps.replaceChildren(new Option('All people', ''));
   for (const p of people) ps.append(new Option(p.name, p.id));
-  ps.value = people.some((p) => p.id === keep) ? keep : (selectedPerson || '');
+  ps.append(new Option('Miscellaneous', '__misc__'));
+  ps.value = keep === '__misc__' || people.some((p) => p.id === keep) ? keep : (selectedPerson || '');
 
   const kinds = [...new Set(memories.map((m) => m.kind).filter(Boolean))].sort();
   const ks = $('#layer-kind');
@@ -334,14 +369,14 @@ function currentRows() {
   }
   // facts and evidence come from /memories
   return memories
-    .filter((m) => (!pid || m.person?.id === pid) && (!kind || m.kind === kind))
+    .filter((m) => (!pid || (pid === '__misc__' ? !m.person : m.person?.id === pid)) && (!kind || m.kind === kind))
     .filter((m) => (layer === 'evidence' ? has(m.source?.quote?.text) : has(m.text)))
     .map((m) => ({
       key: m.ref,
       ref: m.ref,
       text: layer === 'evidence' ? `“${m.source?.quote?.text || ''}”` : m.text,
       kind: m.kind || 'fact',
-      who: m.person?.name || '—',
+      who: m.person?.name || 'Miscellaneous',
       memory: m,
       personId: m.person?.id || null,
     }));
@@ -700,31 +735,25 @@ $('#ask-form').addEventListener('submit', (event) => {
   input.value = '';
   ask(q);
 });
-$('#quick-form').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const input = $('#quick-input');
-  const q = input.value.trim();
-  if (!q) return;
-  input.value = '';
-  ask(q);
-});
 for (const s of document.querySelectorAll('.suggest')) s.addEventListener('click', () => ask(s.textContent));
 
 $('#mic-btn').addEventListener('click', async () => {
+  show('chat');
   const asking = snap?.ask?.phase && snap.ask.phase !== 'idle';
   if (asking) { await api.stopAskListening(); return; }
   const r = await api.startAskListening();
-  if (!r.ok) result(r.error);
+  if (!r.ok) addTurn('pebble', r.error);
 });
 api.onAskState((state) => {
   const listening = state?.phase === 'starting' || state?.phase === 'listening';
   $('#mic-btn').dataset.listening = String(!!listening);
-  if (state?.error) result(state.error);
+  if (state?.error) addTurn('pebble', state.error);
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { api.stopSpeaking(); player.pause(); }
 });
+
 
 // ---------- atlas: the whole memory as a map ----------
 // Only stored relationships are drawn: fact → person, fact → session, person ↔ person.
@@ -1103,5 +1132,6 @@ function openRawSheet() {
 
 $('#raw-group').addEventListener('click', openRawSheet);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+
 
 setMode('record');

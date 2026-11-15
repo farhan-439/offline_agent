@@ -119,17 +119,24 @@ button, input { -webkit-app-region: no-drag; }
 .mode-busy { margin: 0; font-size: 12px; color: var(--ink-3); text-align: center; }
 
 /* live transcript (Capture → Translate) */
-.live-panel { width: 100%; max-width: 640px; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line-2); display: flex; flex-direction: column; min-height: 0; max-height: 320px; flex: none; }
+.live-panel { width: 100%; max-width: 640px; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line-2); display: flex; flex-direction: column; min-height: 0; max-height: min(62vh, 520px); flex: none; }
 .live-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .live-state { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--moss); font-weight: 600; }
-.live-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+.live-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; min-height: 50px; }
 .trow { padding: 7px 10px; border-radius: 9px; background: var(--card); border: 1px solid var(--line-2); }
 .t-orig { display: block; font-size: 11.5px; color: var(--ink-3); }
 .t-eng { display: block; font-size: 14px; line-height: 1.4; color: var(--ink); font-weight: 550; }
 .t-you { display: block; font-size: 10.5px; letter-spacing: .04em; color: var(--slate); font-weight: 600; }
 .t-empty { margin: 0; font-size: 12.5px; color: var(--ink-3); }
-.ask-panel { width: 100%; max-width: 520px; }
-.ask-panel .composer { margin: 0; }
+.reply-controls { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.reply-controls > label { font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.reply-controls select, .reply-form input { min-height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; background: var(--card); color: var(--ink); font: inherit; font-size: 12.5px; }
+.reply-controls select { flex: 1; min-width: 145px; }
+.reply-controls .quiet { min-height: 36px; font-size: 12.5px; }
+.reply-form { width: 100%; display: flex; gap: 7px; }
+.reply-form input { flex: 1; min-width: 0; }
+.reply-form button { flex: none; padding: 7px 12px; border-radius: 8px; background: var(--moss); color: #fff; font-size: 12.5px; }
+.reply-controls .fine { width: 100%; margin: 0; font-size: 11px; }
 
 /* ---------- memory: layers and threads ---------- */
 #view-memory { max-width: 1000px; }

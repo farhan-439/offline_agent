@@ -4,15 +4,15 @@ One hub window with four screens, a floating mark, and a small chat window opene
 
 | Screen | What it does |
 |---|---|
-| **Capture** (main page) ⬅ the stone | The mark is the button. A switch above it sets what a tap does — **Record** (the room, out loud), **Ask** (type or speak a question), **Translate** (their language → English). Labels say which one is running and why the others are unavailable while the microphone is busy. On stop, the session file is sent to memory `/ingest`. |
-| **Chat** | Questions and answers from memory `/ask`. Answers are spoken (Argmax TTSKit, Mac voice fallback) and carry a **N sources** chip that expands to the cited memories and their audio. |
+| **Capture** (main page) ⬅ the stone | The mark switches between **Record** and **Translate**. During Translate, the live transcript and reply controls appear below it. On stop, the session file is sent to memory `/ingest`. |
+| **Chat** | Type or speak a question with its microphone button. Answers from memory `/ask` are spoken and carry a **N sources** chip that expands to cited memories and audio. |
 | **Memory** | Four areas, all reading real endpoints — see below. Keeps **Dock today** and **My voice**. |
 | **Atlas** | The whole memory as one map: people, their facts, and the sessions they were heard in. Only stored links are drawn. |
 | **The mark** | The five-bar mark is the button on Capture. The always-on-top floating version is **switched off for now** (`createOrb()` / `createChat()` still exist in `main.cjs`, but nothing is drawn outside the window). |
 
-## Capture: the three modes and the live transcript
+## Capture: Record, Translate, and the live transcript
 
-Three words, one control: **Record · Ask · Translate**, with the selected one lifted on a quiet track. The line under the stone reports state (`Tap to record`, `Recording · 0:14`, `Translating · 0:47`, `Saving…`). While the microphone is busy the other modes are disabled **with a line explaining why** ("Recording — tap the stone to stop"). A recording started elsewhere (the shortcut) claims the switch until it ends. There is no ring around the stone while it records — the timer and the moving bars carry that.
+The Capture switch has **Record · Translate**. Chat owns Ask, including its voice button. The line under the stone reports state (`Tap to record`, `Recording · 0:14`, `Translating · 0:47`, `Saving…`). While the microphone is busy the other mode is disabled with a reason.
 
 In **Translate**, the page shows a live transcript under the stone: each heard line as `French: "…"` with its English underneath, and your own replies as `You replied` in the language Pebble spoke. States are named (`Listening`, `Translating`, `Listening to you`, `Speaking your reply`, `Saving`, `Saved`). Rows are keyed by translation `seq`, so a line that arrives twice with better text **replaces** rather than duplicates, and the last session stays on screen after **Stop** until a new session begins.
 
@@ -28,8 +28,6 @@ The layout is table-first, the way a CRM record works: a list you scan, a list y
 | **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four tabs — **Inputs**, **Evidence**, **Facts**, **Core** — as a table with `Ref · Content · Person`, colour-coded kind tags, inline search and person/type filters. |
 | **Memory map** (right, full height) | the chosen fact + `GET /traces` | A diagram in two modes. **Fact**: the person above, the fact in the middle with that person's other facts beside it, and the conversation it was heard in below — labelled `WHO / WHAT IT KNOWS / WHERE IT WAS HEARD`. **Recalls**: the question, the refs Bonsai retrieved (cited ones in moss, retrieved-only in grey), the answer, and ‹ › to step through recent recalls. The footer carries the fact's ref, date, scope, uses, the original quote and **Play**. |
 
-Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
-
 ## Atlas (the whole memory as one map)
 
 A fourth rail item, and the answer to "what is actually in here?". The map is built from stored links only — fact → person, fact → session, person ↔ person — so every line corresponds to something the database recorded.
@@ -41,6 +39,8 @@ A fourth rail item, and the answer to "what is actually in here?". The map is bu
 - **Raw inputs stay separate.** The bottom-left card (`N · not linked to any session`) opens the list of typed inputs. They are deliberately not wired to facts or sessions: nothing in the data says a typed input came from a recording, so no line is invented to complete the picture.
 
 Nothing here is synthesised — no invented people, relationships, sessions, or citations. Every node is keyboard reachable (`Tab`, then `Enter`/`Space`), hovering names it, and `Escape` closes the record sheet.
+
+Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
 
 ## Start everything with one command
 
@@ -70,7 +70,7 @@ Env: `KINDRED_MEMORY_URL` (default `http://127.0.0.1:8787`), `KINDRED_CAPTURE_BI
 |---|---|
 | `core.mjs` | All main-process logic (`KindredApp`): drives `CaptureBridge` (`../capture/bridge.mjs`) and `LiveWhisper` (`../capture/live.mjs`), talks to memory over HTTP. No Electron, so it can be tested. |
 | `main.cjs`, `preload.cjs` | Electron shell: window, orb, `⌘⇧K` shortcut, IPC. Adapted from local_ai (Second Nature). Windows are sandboxed, navigation and permission requests are denied, and the CSP blocks network access from the page. |
-| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace, Atlas map. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
+| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
 | `orb.html`, `orb.js`, `orb.css` | The floating mark and its sub-button island. |
 | `mark.mjs`, `mark.css` | The mark: one geometry source (five sage bars) and its motion — still at rest, the voice wave while listening, recording or translating. |
 
@@ -98,12 +98,12 @@ Starts a recording with `translate: true` (`KindredApp.startRecording({ mode: 't
 
 ## Two-way: Reply (German, Chinese, Spanish, French)
 
-During **Live translation**, once Kindred has heard one of these four languages, a **🎙 Reply in French** button appears (or German, Chinese, Spanish). Press it, say your reply in English, then press **Done**.
+During **Live translation**, use the selector to choose Auto (the last supported language heard), Spanish, French, German, or Chinese. You can press **Speak reply**, say English, then press **Done speaking**; or type English and press **Translate & speak**. A spoken or typed reply can begin “Translate this to Spanish: …” to set the language for that reply. Saying only “Translate this to Spanish” switches the target for subsequent replies.
 1. Capture cuts your reply out of the live recording (`reply-start` / `reply-stop`) and transcribes it with English Whisper.
 2. Bonsai 4B translates it (`app/translate.mjs`, a strict interpreter prompt with one worked example, temperature 0).
 3. Argmax TTSKit says it **out loud** in that language (`speak` with `language`).
 
-The reply appears in the Capture transcript as **You replied** with what was actually spoken. It targets the most recent supported language Kindred heard.
+The reply appears in the Capture transcript as **You replied**. The spoken foreign-language text and its English meaning are saved in the session file, then indexed for later recall.
 - **No echo:** live translation ignores the mic while you reply and while Kindred speaks (+0.6 s), so Kindred never translates its own French back to you.
 - **Use the laptop speaker for two-way.** The other person has to hear the reply, and macOS plays through one output device at a time.
 - **Why only these four languages:** in the 11/15 feasibility test, Italian, Portuguese, Japanese, Korean and Russian too often got allergens, days, or "who is speaking" wrong. See `capture/README.md`.

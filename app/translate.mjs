@@ -14,6 +14,15 @@ export function replyLanguage(code) {
   return Object.hasOwn(REPLY_LANGUAGES, base) ? base : null;
 }
 
+/** Optional one-reply direction, e.g. "Hey, translate this to Spanish: Thank you." */
+export function directedReply(value) {
+  const text = String(value ?? '').trim();
+  const match = text.match(/^(?:hey[,! ]*|please\s+)?(?:translate\s+(?:this\s+|the following\s+)?(?:to|into)|say\s+(?:this\s+)?in)\s+(spanish|french|german|chinese|mandarin)\s*[:,.!?-]*\s*(.*)$/is);
+  if (!match) return { text, language: null };
+  const language = { spanish: 'es', french: 'fr', german: 'de', chinese: 'zh', mandarin: 'zh' }[match[1].toLowerCase()];
+  return { text: match[2].trim(), language };
+}
+
 // One worked example per language. In testing it fixed most "Can you help me?" → "Can I help you?"
 // flips and dropped words (allergens, days).
 const EXAMPLE_EN = 'Can you help me find my hotel? I am allergic to shellfish.';

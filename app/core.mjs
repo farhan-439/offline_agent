@@ -4,9 +4,9 @@
 //   capture (Argmax, kindred-capture serve) ──events──▶ KindredApp ──▶ LiveWhisper ──/identify──▶ memory
 //   memory (Bonsai, :8787) ◀──HTTP── KindredApp: /health /people /dock /ask, /ingest after a recording
 import http from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { translateReply, replyLanguage, REPLY_LANGUAGES } from './translate.mjs';
+import { translateReply, replyLanguage, directedReply, REPLY_LANGUAGES } from './translate.mjs';
 import { MemorySupervisor } from './memory-supervisor.mjs';
 import { RunLog } from './run-log.mjs';
 import { pathToFileURL } from 'node:url';
@@ -80,6 +80,7 @@ export class KindredApp {
     this.memory = { ok: false, message: 'Checking memory…' };
     this.capture = { ...this.bridge.status(), message: this.bridge.status().available ? 'Loading Argmax models…' : 'kindred-capture is not built. Run: cd capture && npm run build' };
     this.recording = idleRecording();
+    this.sessionReplies = [];
     this.lastWhisper = null;
     this.recordingTask = null;
     this.lastCaptureError = '';
@@ -251,11 +252,21 @@ export class KindredApp {
   // ---------- two-way: reply in their language ----------
   /** The language to reply in: the most recent one Kindred heard that replies support (de/zh/es/fr). */
   replyTarget() {
+    if (this.recording.replyTargetOverride) return this.recording.replyTargetOverride;
     for (const t of [...(this.recording.translations || [])].reverse()) {
       const lang = replyLanguage(t.language);
       if (lang) return lang;
     }
     return null;
+  }
+
+  setReplyLanguage(language = null) {
+    const chosen = language === null || language === 'auto' || language === '' ? null : replyLanguage(language);
+    if (language && language !== 'auto' && !chosen) throw new Error('Choose Spanish, French, German or Chinese.');
+    if (this.recording.reply.phase !== 'idle') throw new Error('Finish the current reply before switching languages.');
+    this.recording = { ...this.recording, replyTargetOverride: chosen };
+    this.changed();
+    return { language: chosen, target: this.replyTarget() };
   }
 
   setReply(patch) {
@@ -269,7 +280,6 @@ export class KindredApp {
     if (rec.mode !== 'translate' || rec.phase !== 'recording') throw new Error('Reply works during Live translation.');
     if (rec.reply.phase !== 'idle') throw new Error('Finish the current reply first.');
     const language = this.replyTarget();
-    if (!language) throw new Error(`Reply works once Kindred has heard ${Object.values(REPLY_LANGUAGES).join(', ').replace('Simplified ', '')}.`);
     this.bridge.stopSpeaking();
     this.setReply({ phase: 'listening', language, english: null, translated: null, error: null });
     try { await this.bridge.replyStart(); } catch (e) { this.setReply({ phase: 'idle', error: e.message }); throw e; }
@@ -278,13 +288,21 @@ export class KindredApp {
 
   /** Done speaking: transcribe (Argmax) → translate (Bonsai) → say it in their language (Argmax). */
   async stopReply() {
-    const { phase, language } = this.recording.reply;
+    const { phase } = this.recording.reply;
     if (phase !== 'listening') return false;
     let english = null, translated = null;
     try {
       this.setReply({ phase: 'transcribing' });
-      english = (await this.bridge.replyStop()).text;
-      this.setReply({ phase: 'translating', english });
+      const directed = directedReply((await this.bridge.replyStop()).text);
+      english = directed.text;
+      if (!english && directed.language) {
+        this.setReply({ phase: 'idle', error: null });
+        this.setReplyLanguage(directed.language);
+        return { language: directed.language, selected: true };
+      }
+      const language = directed.language || this.replyTarget();
+      if (!language) throw new Error('Choose a reply language, or say “Translate this to Spanish: …”.');
+      this.setReply({ phase: 'translating', english, language });
       const t0 = Date.now();
       translated = (await this.translate(english, language)).translation;
       const item = { kind: 'reply', language, english, translated, at: Date.now(), translateMs: Date.now() - t0 };
@@ -294,11 +312,42 @@ export class KindredApp {
       // After any English translations still queued, so the two voices don't overlap.
       await (this.translationSpeech || Promise.resolve());
       await this.bridge.speakIn(translated, language);
+      this.sessionReplies.push(item);
       this.setReply({ phase: 'idle', error: null });
       return item;
     } catch (e) {
       this.setReply({ phase: 'idle', error: /didn't|reply/i.test(e.message) ? e.message : `Reply failed: ${e.message}`, english, translated });
       return null;
+    }
+  }
+
+  /** Typed English reply during a translation recording: Bonsai translates, Argmax speaks. */
+  async sendTypedReply(text) {
+    const directed = directedReply(text);
+    const english = directed.text;
+    if (this.recording.mode !== 'translate' || this.recording.phase !== 'recording')
+      throw new Error('Start Live translation before replying.');
+    if (this.recording.reply.phase !== 'idle') throw new Error('Finish the current reply first.');
+    if (!english && directed.language) return this.setReplyLanguage(directed.language);
+    if (!english) throw new Error('Write a reply first.');
+    const language = directed.language || this.replyTarget();
+    if (!language) throw new Error('Choose a reply language, or type “Translate this to Spanish: …”.');
+    try {
+      this.setReply({ phase: 'translating', language, english, translated: null, error: null });
+      const t0 = Date.now();
+      const translated = (await this.translate(english, language)).translation;
+      const item = { kind: 'reply', language, english, translated, at: Date.now(), translateMs: Date.now() - t0 };
+      this.recording = { ...this.recording, replies: [...this.recording.replies, item].slice(-MAX_TRANSLATIONS) };
+      this.emit('reply', item);
+      this.setReply({ phase: 'speaking', translated });
+      await (this.translationSpeech || Promise.resolve());
+      await this.bridge.speakIn(translated, language);
+      this.sessionReplies.push(item);
+      this.setReply({ phase: 'idle', error: null });
+      return item;
+    } catch (error) {
+      this.setReply({ phase: 'idle', error: `Reply failed: ${error.message}` });
+      throw error;
     }
   }
 
@@ -314,6 +363,7 @@ export class KindredApp {
     if (!this.capture.available) throw new Error(this.capture.message);
     this.live.reset();
     this.lastWhisper = null;
+    this.sessionReplies = [];
     this.recording = { ...idleRecording(), mode, phase: 'starting', startedAt: Date.now() };
     this.runLog.write('recording-start', { mode });
     this.changed();
@@ -398,9 +448,15 @@ export class KindredApp {
       this.emit('recording-done', { ok: false, cancelled, error: e.message });
       return null;
     }
-    const summary = { session: result.session, jsonl: result.jsonl, audio: result.audio, utterances: result.utterances, speakers: result.speakers };
+    let addedReplies = 0;
+    if (translate && this.sessionReplies.length) {
+      try { addedReplies = includeReplyEvents(result.jsonl, result.session, this.sessionReplies, this.repoRoot, this.recording.startedAt); }
+      catch (error) { this.emit('log', `could not add translated replies to the session: ${error.message}`); }
+    }
+    const summary = { session: result.session, jsonl: result.jsonl, audio: result.audio,
+      utterances: result.utterances + addedReplies, speakers: result.speakers };
     let ingested = null, ingestError = null;
-    if (!result.utterances) ingestError = 'No words were transcribed, so this recording has no searchable memory. Try recording again.';
+    if (!summary.utterances) ingestError = 'No words were transcribed, so this recording has no searchable memory. Try recording again.';
     else {
       await this.checkMemory();
       if (this.memory.ok) {
@@ -577,6 +633,32 @@ export function normalisePerson(p) {
 }
 
 function idleRecording() {
-  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], translations: [], replies: [],
+  return { phase: 'idle', mode: 'conversation', session: null, device: null, engine: null, note: null, voices: [], translations: [], replies: [], replyTargetOverride: null,
     reply: { phase: 'idle', language: null, english: null, translated: null, error: null }, error: null, startedAt: null, last: null };
+}
+
+/** Store both sides of a translated reply in the durable session before memory ingests it. */
+export function includeReplyEvents(file, session, replies, repoRoot, startedAt = null) {
+  const inbox = path.resolve(repoRoot, 'data/inbox') + path.sep;
+  const target = path.resolve(repoRoot, file);
+  if (!target.startsWith(inbox)) return 0;
+  const events = readFileSync(target, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  const end = events.at(-1);
+  if (end?.type !== 'session_end' || end.session !== session) throw new Error('recording is not complete');
+  let added = 0;
+  for (const [index, reply] of replies.entries()) {
+    const id = `${session}#reply${String(index + 1).padStart(4, '0')}`;
+    if (events.some((event) => event.id === id)) continue;
+    const start = Number.isFinite(startedAt) && Number.isFinite(reply.at)
+      ? Math.max(0, Math.round((reply.at - startedAt) / 10) / 100) : null;
+    events.splice(events.length - 1, 0, { type: 'utterance', session, id, speaker: 'OWNER',
+      start, end: start, text: reply.translated, language: reply.language, translation: reply.english, audio: null });
+    added++;
+  }
+  if (added) {
+    const temp = `${target}.tmp`;
+    writeFileSync(temp, events.map((event) => JSON.stringify(event)).join('\n') + '\n', { mode: 0o600 });
+    renameSync(temp, target);
+  }
+  return added;
 }

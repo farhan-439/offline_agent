@@ -139,6 +139,7 @@ const citedSources = (pages) => pages.map((page) => ({
   ref: page.ref, layer: page.layer, text: pageText(page), when: page.when ?? null,
   photoId: page.photo?.id ?? page.photoId ?? null,
 }));
+const hasDirectUserFact = (pages) => pages.some((page) => page.layer === 'fact' && page.origin === 'user');
 function sourceScore(question, page) {
   const text = pageText(page).toLowerCase();
   return supportTerms(question).reduce((score, term) => score + (text.includes(term)
@@ -344,7 +345,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
       onStep(trace.at(-1));
       bumpUsage(db, cites);
       const result = { answer: answerWithUnknownTime(question, out.answer), cites, clips, photos, inputs, sources: citedSources(citedPages), trace,
-        grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
+        grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0 || hasDirectUserFact(citedPages), mode };
       if (persistTrace) saveTrace(db, question, result);
       return result;
     } else {
@@ -377,7 +378,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
             const safe = { answer: `I can't verify when that happened. The saved memory says: ${pageText(source)}`,
               cites: [source.ref], clips: evidenceClips(db, (source.evidence ?? []).slice(0, 4)),
               photos: [], inputs: evidenceInputs(db, [source.ref]), sources: citedSources([source]), trace,
-              grounded: source.layer === 'input' || (source.evidence ?? []).length > 0, mode };
+              grounded: source.layer === 'input' || source.origin === 'user' || (source.evidence ?? []).length > 0, mode };
             if (persistTrace) saveTrace(db, question, safe);
             return safe;
           }
@@ -387,7 +388,7 @@ export async function ask(db, bonsai, question, { today = new Date().toISOString
         trace.push({ step: 'fallback', action: 'answer', cite: cites });
         bumpUsage(db, cites);
         const result = { answer: answerWithUnknownTime(question, out.answer.trim()), cites, clips, photos, inputs, sources: citedSources(citedPages), trace,
-          grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0, mode };
+          grounded: clips.length > 0 || photos.length > 0 || inputs.length > 0 || hasDirectUserFact(citedPages), mode };
         if (persistTrace) saveTrace(db, question, result);
         return result;
       }

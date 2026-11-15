@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('kindred', {
   startReply: () => ipcRenderer.invoke('reply:start'),
   stopReply: () => ipcRenderer.invoke('reply:stop'),
   cancelReply: () => ipcRenderer.invoke('reply:cancel'),
+  setReplyLanguage: (language) => ipcRenderer.invoke('reply:language', language),
+  sendTypedReply: (text) => ipcRenderer.invoke('reply:typed', text),
   people: () => ipcRenderer.invoke('memory:people'),
   memories: () => ipcRenderer.invoke('memory:memories'),
   inputs: () => ipcRenderer.invoke('memory:inputs'),

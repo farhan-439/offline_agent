@@ -115,7 +115,7 @@ import { replyLanguage } from './translate.mjs';
 export function replyButtonState(rec = {}) {
   if (rec.mode !== 'translate' || rec.phase !== 'recording') return { hidden: true };
   const reply = rec.reply || { phase: 'idle' };
-  const target = reply.language || [...(rec.translations || [])].reverse().map((t) => replyLanguage(t.language)).find(Boolean) || null;
+  const target = reply.language || rec.replyTargetOverride || [...(rec.translations || [])].reverse().map((t) => replyLanguage(t.language)).find(Boolean) || null;
   const lang = target ? languageName(target) : null;
   switch (reply.phase) {
     case 'listening': return { label: `■ Done, say it in ${lang}`, hint: 'Speak your reply in English, then press Done.', listening: true, disabled: false };

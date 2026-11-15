@@ -61,8 +61,8 @@ export function search(db, query, { person = null, limit = 6, now = Date.now() }
 
   for (const f of facts.values()) items.push({
     ref: `F${f.rowid}`, layer: 'fact', personId: f.person_id,
-    text: `${f.person ?? '?'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
-    when: f.observed_at, evidence: parse(f.evidence, []), bm25: f.rank,
+    text: `${f.person ?? 'Miscellaneous'} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
+    when: f.observed_at, evidence: parse(f.evidence, []), origin: f.origin ?? 'extracted', bm25: f.rank,
   });
 
   if (q) {
@@ -132,8 +132,8 @@ export function pageByRef(db, ref, query = '') {
     if (!f) return null;
     const people = db.prepare('SELECT p.name FROM fact_people fp JOIN people p ON p.id = fp.person_id WHERE fp.fact = ?').all(Number(ref.slice(1))).map((r) => r.name);
     return { ref, layer: 'fact', personId: f.person_id,
-      text: `${f.person ?? '?'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
-      when: f.observed_at, evidence: parse(f.evidence, []) };
+      text: `${f.person ?? 'Miscellaneous'}${people.length > 1 ? ` with ${people.filter((n) => n !== f.person).join(', ')}` : ''} · ${f.kind}${f.when_text ? ` · ${f.when_text}` : ''}${f.when_resolved ? ` [calendar date ${f.when_resolved}]` : ''}: ${f.text}${f.about_raw === 'user-confirmed correction' ? ' [user-confirmed correction; no original audio proof]' : ''}`,
+      when: f.observed_at, evidence: parse(f.evidence, []), origin: f.origin ?? 'extracted' };
   }
   if (/^E\d+$/.test(ref)) {
     const e = db.prepare('SELECT e.*, s.started_at FROM episodes e JOIN sessions s ON s.id = e.session WHERE e.rowid = ?').get(Number(ref.slice(1)));

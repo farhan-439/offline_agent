@@ -42,7 +42,7 @@ export function segment(utterances, { gap = EPISODE_GAP_S, maxWords = EPISODE_MA
 
 // ---------- stage 2 · Bonsai extraction ----------
 
-const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'directions', 'travel', 'other'];
+const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'directions', 'travel', 'miscellaneous', 'other'];
 
 const EXTRACT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['summary', 'speakers', 'mentioned', 'facts'],
@@ -68,15 +68,15 @@ Return JSON:
 - speakers: for every label, the person's name and their relation to the owner, ONLY if the excerpt states it (e.g. "it's Maya from next door", "I'm Doctor Patel"). Use null when not stated. The owner's label is OWNER. Never put a form of address (Mom, Dad, honey, doctor) in name; those are how someone is addressed, not their name.
 - relation: one noun relative to the owner: neighbour, son, daughter, granddaughter, grandson, doctor, nurse, friend, partner, caregiver. Never "next door", never "daughter of S1", never "owner's mother". If the speaker calls the owner "Mom" or "Dad", that speaker's relation is son or daughter. A son's daughter is the owner's granddaughter; a speaker's doctor is the owner's doctor.
 - mentioned: people talked about but not speaking (e.g. a daughter), with relation to the owner. Never the owner and never a form of address.
-- facts: things the owner would want to remember later: plans with dates, promises, health, medication changes, allergies, preferences, family news, directions, landmarks, addresses and travel instructions.
-  · "about" is the person's name (or OWNER). "people" lists every person the fact is about, including "about" and anyone else it concerns (for "Sam is coming with Lily", about is Sam and people are ["Sam","Lily"]).
+- facts: things the owner would want to remember later: plans with dates, promises, health, medication changes, allergies, preferences, family news, directions, landmarks, addresses, travel instructions, and ordinary object details such as "the apple is blue". An unanswered question is not a fact.
+  · "about" is the person's name, OWNER when clearly about the owner, or MISC when no person is known. "people" lists every known person the fact is about; use [] for MISC.
   · text is one short third-person statement. Write the owner as "the owner" and everyone else by name. Never use I, me, my, we, our, you — even when the speaker said them. "Could you water my tomato plants?" becomes "Maya asked the owner to water her tomato plants."
   · Copy dates/times exactly as said in "when". "evidence" lists the utterance ids that state the fact. When a line has a translation, use it for meaning but cite the same original utterance id. Never invent anything not said.`;
 
 function formatEpisode(ep, roster, intros) {
   const lines = ep.utterances.map((u) => {
     const who = roster.get(u.speaker);
-    const label = who?.isOwner ? 'OWNER' : `${u.speaker}${who ? ` (${who.name})` : ' (?)'}`;
+    const label = u.speaker === 'OWNER' || who?.isOwner ? 'OWNER' : `${u.speaker}${who ? ` (${who.name})` : ' (?)'}`;
     return `[${u.id}] ${label}: ${u.text}${u.translation ? ` [translation: ${u.translation}]` : ''}`;
   });
   const hints = ep.utterances
@@ -142,7 +142,7 @@ export async function refreshCore(db, bonsai, personId) {
 
 function resolveAbout(db, about, { roster, owner, sessionText, report }) {
   const raw = typeof about === 'string' ? about.trim() : '';
-  if (!raw) return { pid: owner?.id ?? null, raw: null };
+  if (!raw || /^(misc|miscellaneous|unknown|none)$/i.test(raw)) return { pid: null, raw: raw || null };
   if (OWNER_TOKENS.has(raw.toLowerCase())) return { pid: owner?.id ?? null, raw };
   const known = [...roster.values()].find((p) => p.name?.toLowerCase() === raw.toLowerCase());
   if (known) return { pid: known.id, raw };
@@ -154,7 +154,7 @@ function resolveAbout(db, about, { roster, owner, sessionText, report }) {
   }
   // Free text like "my neighbour's daughter" must not become a person row.
   report.rejected_names.push(raw);
-  return { pid: owner?.id ?? null, raw };
+  return { pid: null, raw };
 }
 
 export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = null } = {}) {
@@ -274,7 +274,8 @@ export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = 
           const resolved = resolveWhen(f.when, s.started_at);
 
           // duplicate / contradiction handling, deterministic and model-free
-          const existing = db.prepare("SELECT rowid, text FROM facts WHERE person_id = ? AND kind = ? AND status = 'active'").all(pid, f.kind);
+          const kind = pid ? f.kind : 'miscellaneous';
+          const existing = db.prepare("SELECT rowid, text FROM facts WHERE person_id IS ? AND kind = ? AND status = 'active'").all(pid, kind);
           if (existing.some((x) => sameFact(x.text, f.text))) { report.duplicates++; continue; }
           for (const x of existing) {
             if (contradicts(x.text, f.text)) {
@@ -291,7 +292,7 @@ export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = 
           }
           const primary = people.find((p) => p.pid === pid) ?? { pid, raw };
           const r = db.prepare('INSERT INTO facts (person_id, kind, text, when_text, when_resolved, evidence, session, episode, observed_at, about_raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .run(primary.pid, f.kind, f.text, f.when ?? null, resolved, json(evidence), s.id, ep_.lastInsertRowid, s.started_at ?? now(), primary.raw ?? null);
+            .run(primary.pid, kind, f.text, f.when ?? null, resolved, json(evidence), s.id, ep_.lastInsertRowid, s.started_at ?? now(), primary.raw ?? null);
           const rowid = r.lastInsertRowid;
           for (const p of people) {
             db.prepare('INSERT OR IGNORE INTO fact_people (fact, person_id, role) VALUES (?, ?, ?)')
@@ -300,7 +301,7 @@ export async function dock(db, bonsai, { onEvent = () => {}, mode: forcedMode = 
           }
           if (primary.pid) db.prepare('INSERT OR IGNORE INTO fact_people (fact, person_id, role) VALUES (?, ?, ?)').run(rowid, primary.pid, 'primary');
           const names = people.length ? people.map((p) => db.prepare('SELECT name FROM people WHERE id = ?').get(p.pid)?.name).filter(Boolean) : ['?'];
-          db.prepare('INSERT INTO facts_fts (rowid, text, person, kind) VALUES (?, ?, ?, ?)').run(rowid, `${f.text} ${f.when ?? ''}`, names.join(' '), f.kind);
+          db.prepare('INSERT INTO facts_fts (rowid, text, person, kind) VALUES (?, ?, ?, ?)').run(rowid, `${f.text} ${f.when ?? ''}`, names.join(' '), kind);
           report.facts++;
         }
         for (const p of roster.values()) {

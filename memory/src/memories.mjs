@@ -6,7 +6,7 @@ import { isValidPersonName, displayName } from './names.mjs';
 import { findPersonByName, upsertPerson } from './identity.mjs';
 import { indexMemories } from './embeddings.mjs';
 
-export const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'directions', 'travel', 'other'];
+export const KINDS = ['plan', 'promise_by_owner', 'promise_by_them', 'health', 'medication', 'preference', 'family', 'personal', 'directions', 'travel', 'miscellaneous', 'other'];
 
 function quoteFor(db, ids) {
   for (const id of ids) {
@@ -65,10 +65,9 @@ export function listMemories(db, { q = null, person = null, status = 'active', l
  * Explicit save ("＋ Remember", or "Remember this: …"). The user's own words are the source, so
  * origin is "user" and there is no utterance evidence to cite.
  */
-export async function rememberMemory(db, bonsai, { text, person = null, kind = 'personal', scope = 'all', when = null } = {}) {
+export async function rememberMemory(db, bonsai, { text, person = null, kind = null, scope = 'all', when = null } = {}) {
   const statement = String(text ?? '').trim();
   if (statement.length < 3) throw new Error('memory text is required (at least 3 characters)');
-  const owner = db.prepare('SELECT id, name FROM people WHERE is_owner = 1').get();
   let pid = null;
   if (person) {
     const name = displayName(person);
@@ -78,14 +77,12 @@ export async function rememberMemory(db, bonsai, { text, person = null, kind = '
       if (!isValidPersonName(name)) throw new Error(`not a person name: ${person}`);
       pid = upsertPerson(db, { name });
     }
-  } else {
-    pid = owner?.id ?? null;
   }
   const personName = pid ? db.prepare('SELECT name FROM people WHERE id = ?').get(pid)?.name ?? '' : '';
-  const k = KINDS.includes(kind) ? kind : 'personal';
+  const k = KINDS.includes(kind) ? kind : (pid ? 'personal' : 'miscellaneous');
   const r = db.prepare(`INSERT INTO facts (person_id, kind, text, when_text, when_resolved, evidence, session, episode, observed_at, about_raw, origin, scope)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?)`)
-    .run(pid, k, statement, when, null, json([]), null, null, now(), person ?? (owner?.name ?? null), scope);
+    .run(pid, k, statement, when, null, json([]), null, null, now(), person, scope);
   const rowid = r.lastInsertRowid;
   db.prepare('INSERT INTO facts_fts (rowid, text, person, kind) VALUES (?, ?, ?, ?)').run(rowid, `${statement} ${when ?? ''}`, personName, k);
   if (pid) db.prepare('INSERT OR IGNORE INTO fact_people (fact, person_id, role) VALUES (?, ?, ?)').run(rowid, pid, 'primary');

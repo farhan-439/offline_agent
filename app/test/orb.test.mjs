@@ -134,7 +134,7 @@ test('a normal recording does not ask capture to translate', async () => {
 
 // ---------- two-way: replies ----------
 import { replyButtonState, conversationLines } from '../view.mjs';
-import { translateReply, replyLanguage, REPLY_LANGUAGES } from '../translate.mjs';
+import { translateReply, replyLanguage, directedReply, REPLY_LANGUAGES } from '../translate.mjs';
 
 class ReplyBridge extends StubBridge {
   constructor(o) { super(o); this.replyCalls = []; this.spokenIn = []; }
@@ -179,16 +179,54 @@ test('reply: English → Bonsai → spoken in the language Kindred last heard', 
   bridge.stopRecording(); await app.recordingTask;
 });
 
-test('reply: unsupported or no language yet → refused with the reason', async () => {
+test('reply: Auto uses the last supported language; a spoken direction can work before one is heard', async () => {
   const { app, bridge } = replyApp();
   app.startRecording({ mode: 'translate' });
   bridge.onEvent({ type: 'mic-live' });
-  await assert.rejects(app.startReply(), /German, Chinese, Spanish, French/);
+  bridge.nextReply = 'Hey, translate this to Spanish: Thank you.';
+  await app.startReply();
+  assert.equal((await app.stopReply()).language, 'es');
   heard(bridge, 1, 'it');
-  await assert.rejects(app.startReply(), /once Kindred has heard/, 'Italian is heard but not a reply language');
   heard(bridge, 2, 'es');
   heard(bridge, 3, 'ja');
   assert.equal(app.replyTarget(), 'es', 'falls back to the last supported language');
+  bridge.stopRecording(); await app.recordingTask;
+});
+
+test('explicit language switch and typed reply use Bonsai translation and Argmax speech', async () => {
+  const { app, bridge } = replyApp();
+  app.startRecording({ mode: 'translate' });
+  bridge.onEvent({ type: 'mic-live' });
+  assert.deepEqual(app.setReplyLanguage('fr'), { language: 'fr', target: 'fr' });
+  const first = await app.sendTypedReply('Thank you.');
+  assert.equal(first.language, 'fr');
+  assert.deepEqual(bridge.spokenIn.at(-1), ['[fr] Thank you.', 'fr']);
+  const second = await app.sendTypedReply('Translate this to Spanish: Where is the station?');
+  assert.equal(second.language, 'es');
+  assert.equal(second.english, 'Where is the station?');
+  assert.deepEqual(bridge.spokenIn.at(-1), ['[es] Where is the station?', 'es']);
+  assert.equal(app.setReplyLanguage('auto').target, null);
+  bridge.stopRecording(); await app.recordingTask;
+});
+
+test('directedReply strips the command and requires actual message content', () => {
+  assert.deepEqual(directedReply('Hey, translate this to Spanish: The apple is blue.'), { text: 'The apple is blue.', language: 'es' });
+  assert.deepEqual(directedReply('Thank you.'), { text: 'Thank you.', language: null });
+  assert.deepEqual(directedReply('Translate this to French'), { text: '', language: 'fr' });
+});
+
+test('a spoken language command alone changes the target for the next reply', async () => {
+  const { app, bridge } = replyApp();
+  app.startRecording({ mode: 'translate' });
+  bridge.onEvent({ type: 'mic-live' });
+  bridge.nextReply = 'Hey, translate this to Spanish.';
+  await app.startReply();
+  assert.deepEqual(await app.stopReply(), { language: 'es', selected: true });
+  assert.equal(app.snapshot().recording.replyTargetOverride, 'es');
+  assert.equal(bridge.spokenIn.length, 0);
+  bridge.nextReply = 'Thank you.';
+  await app.startReply();
+  assert.equal((await app.stopReply()).language, 'es');
   bridge.stopRecording(); await app.recordingTask;
 });
 

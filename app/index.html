@@ -51,20 +51,10 @@
 
         <div class="modes" role="tablist" aria-label="What should the stone do?">
           <button class="mode" type="button" data-mode="record" role="tab" aria-selected="true">Record</button>
-          <button class="mode" type="button" data-mode="ask" role="tab" aria-selected="false">Ask</button>
           <button class="mode" type="button" data-mode="translate" role="tab" aria-selected="false">Translate</button>
         </div>
 
         <p id="mode-busy" class="mode-busy" role="status" hidden></p>
-
-        <div id="ask-panel" class="ask-panel" hidden>
-          <form id="quick-form" class="composer" autocomplete="off">
-            <button id="mic-btn" class="mic" type="button" aria-label="Ask by voice"><span id="mic-mark"></span></button>
-            <label class="sr-only" for="quick-input">Your question</label>
-            <input id="quick-input" maxlength="500" placeholder="Ask…" spellcheck="true">
-            <button id="quick-send" type="submit" aria-label="Send">↑</button>
-          </form>
-        </div>
 
         <section id="live-panel" class="live-panel" aria-label="Live transcript" hidden>
           <header class="live-head">
@@ -72,6 +62,23 @@
             <span id="live-meta" class="fine"></span>
           </header>
           <ul id="live-list" class="live-list" aria-live="polite"></ul>
+          <div id="reply-controls" class="reply-controls" hidden>
+            <label for="reply-language">Reply language</label>
+            <select id="reply-language">
+              <option value="auto">Auto (language heard)</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="zh">Chinese</option>
+            </select>
+            <button id="reply-voice" type="button" class="quiet">Speak reply</button>
+            <form id="reply-form" class="reply-form" autocomplete="off">
+              <label class="sr-only" for="reply-text">Your English reply</label>
+              <input id="reply-text" maxlength="400" placeholder="Or type your reply in English…">
+              <button id="reply-send" type="submit">Translate & speak</button>
+            </form>
+            <p id="reply-status" class="fine" role="status" hidden></p>
+          </div>
         </section>
 
         <p id="whisper" class="whisper" aria-live="assertive" hidden></p>
@@ -90,6 +97,7 @@
           </div>
         </div>
         <form id="ask-form" class="composer" autocomplete="off">
+          <button id="mic-btn" class="mic" type="button" aria-label="Ask by voice"><span id="mic-mark"></span></button>
           <label class="sr-only" for="ask-input">Your question</label>
           <input id="ask-input" maxlength="500" placeholder="Ask…" spellcheck="true">
           <button id="ask-send" type="submit" aria-label="Send">↑</button>
@@ -153,6 +161,7 @@
           </section>
         </div>
       </section>
+
       <!-- ===== Atlas: the whole memory as a map ===== -->
       <section id="view-atlas" class="view atlas" aria-label="Atlas" hidden>
         <div class="atlas-head">
