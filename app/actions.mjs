@@ -188,7 +188,10 @@ export function mountActions(api, { play }) {
     if (!r.ok) { status.textContent = r.error || 'Memory is unavailable.'; return; }
     suggestions = r.value.suggestions || [];
     for (const id of queue.keys()) if (!suggestions.some((a) => a.id === id && a.status === 'proposed')) queue.delete(id);
-    status.textContent = `${suggestions.filter((a) => a.status === 'proposed').length} to review · ${suggestions.filter((a) => a.status === 'added').length} added`;
+    const proposed = suggestions.filter((a) => a.status === 'proposed').length;
+    status.textContent = `${proposed} to review · ${suggestions.filter((a) => a.status === 'added').length} added`;
+    const count = document.querySelector('#actions-count');
+    if (count) count.textContent = proposed ? `${proposed} to review` : 'nothing waiting';
     listView();
   }
 

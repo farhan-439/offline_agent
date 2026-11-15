@@ -151,24 +151,53 @@ button, input { -webkit-app-region: no-drag; }
 .mem-head .fine { margin: 0; font-size: 12px; }
 .mem-head .row { margin: 0; }
 .memory { max-width: none; padding: 14px 18px 14px; gap: 8px; overflow: hidden; }
-.mem-tabs { flex: none; display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--line-2); align-self: flex-start; }
-.memtab { padding: 5px 14px; border-radius: 8px; font-size: 12px; color: var(--ink-3); }
-.memtab:hover { color: var(--ink-2); }
-.memtab[aria-selected="true"] { background: var(--card); color: var(--moss); font-weight: 600; box-shadow: 0 1px 2px rgba(29, 27, 23, .10); }
-.mem-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 292px; grid-template-rows: minmax(0, 1fr) 122px; gap: 10px; }
-.field-panel { grid-column: 1; grid-row: 1; }
-.side { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.activity-panel { grid-column: 1 / span 2; grid-row: 2; }
+.mem-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 322px minmax(0, 1fr) 286px; grid-template-rows: minmax(0, 1fr) 118px; gap: 10px; }
+.actions-panel { grid-column: 1; grid-row: 1; }
+.field-panel { grid-column: 2; grid-row: 1; }
+.side { grid-column: 3; grid-row: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
+.activity-panel { grid-column: 1 / span 3; grid-row: 2; }
+
+/* actions, shrunk to a left-hand column so the shelf keeps the room */
+.actions-panel .actions-tools { flex: none; display: flex; gap: 5px; padding: 7px 10px; border-bottom: 1px solid var(--line-2); }
+.actions-panel .actions-tools .act { flex: 1 1 auto; padding: 5px 6px; font-size: 10.5px; text-align: center; }
+.actions-panel #run-actions:not(:disabled) { background: var(--moss); border-color: transparent; color: #fff; }
+.actions-panel .actions-status { margin: 0; padding: 7px 10px 0; font-size: 10.5px; line-height: 1.4; color: var(--ink-3); }
+.actions-panel .run-review { flex: none; margin: 7px 10px 0; max-height: 46%; overflow: auto; padding: 9px 11px; }
+.actions-panel .run-review h3 { font: 600 12.5px system-ui; }
+.actions-panel .run-review p, .actions-panel .run-review li { font-size: 10.5px; }
+.actions-panel .actions-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
+.actions-panel .action-list, .actions-panel .action-detail { border: 1px solid var(--line-2); border-radius: 8px; background: #fff; }
+.actions-panel .action-list { flex: 1 1 40%; min-height: 84px; padding: 5px; }
+.actions-panel .action-detail { flex: 1 1 60%; min-height: 0; padding: 9px 10px 11px; }
+.actions-panel .action-list-empty, .actions-panel .action-detail-empty { padding: 10px 8px; font-size: 10.5px; line-height: 1.5; }
+.actions-panel .action-row { padding: 5px 6px; }
+.actions-panel .action-row strong { font-size: 11.5px; }
+.actions-panel .action-row small { font-size: 9.5px; }
+.actions-panel .action-pill { font-size: 8.5px; padding: 2px 5px; }
+.actions-panel .action-detail h3 { margin-bottom: 3px; font: 600 13px system-ui; line-height: 1.3; }
+.actions-panel .action-detail .lead { margin-bottom: 8px; font-size: 10.5px; }
+.actions-panel .action-source { margin-bottom: 9px; padding: 7px 9px; }
+.actions-panel .action-source strong { font-size: 8.5px; }
+.actions-panel .action-source p { font-size: 11px; line-height: 1.4; }
+.actions-panel .action-source small { font-size: 9.5px; }
+.actions-panel .action-source button { font-size: 9.5px; padding: 3px 7px; }
+.actions-panel .action-form { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+.actions-panel .action-form label { font-size: 9.5px; gap: 3px; }
+.actions-panel .action-form input, .actions-panel .action-form select, .actions-panel .action-form textarea { padding: 5px 7px; font-size: 11.5px; border-radius: 6px; }
+.actions-panel .action-form textarea { min-height: 52px; }
+.actions-panel .action-form .hint { font-size: 9.5px; }
+.actions-panel .review-btn, .actions-panel .action-confirm button, .actions-panel .run-review button { padding: 6px 9px; font-size: 11px; }
+.actions-panel .action-confirm p { font-size: 10.5px; }
 
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--card); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .panel-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); background: #FBF9F5; }
-.panel h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.panel h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel h2 svg { width: 13px; height: 13px; flex: none; fill: none; stroke: var(--ink-3); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .panel .count { font-size: 10px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .hint { margin: 10px 2px; font-size: 12px; color: var(--ink-3); }
 
 /* the shelf */
-#field-search { height: 26px; width: 168px; border-radius: 6px; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 11.5px; color: var(--ink-2); padding: 0 8px; }
+#field-search { height: 26px; width: 132px; border-radius: 6px; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 11.5px; color: var(--ink-2); padding: 0 8px; }
 #field-search::placeholder { color: var(--ink-3); }
 .kind-legend { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--line-2); }
 .kchip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; color: var(--ink-3); }
@@ -287,8 +316,9 @@ button, input { -webkit-app-region: no-drag; }
 @media (max-width: 1040px) {
   .memory { overflow-y: auto; }
   .mem-grid { display: flex; flex-direction: column; gap: 10px; }
-  .field-panel { min-height: 400px; }
-  .side { display: flex; flex-direction: column; }
+  .field-panel { min-height: 420px; }
+  .actions-panel { min-height: 460px; }
+  .side { display: flex; flex-direction: column; overflow: visible; }
   .side .panel { flex: none; }
   .questions-panel { min-height: 240px; }
   .activity-panel { min-height: 150px; }

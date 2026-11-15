@@ -318,8 +318,12 @@ api.onIntent(async (payload) => {
 const KIND_CLASS = { health: 'health', task: 'task', place: 'place', home: 'home' };
 const kindClass = (k) => KIND_CLASS[String(k || '').toLowerCase()] || 'other';
 const dateOnly = (iso) => (iso ? String(iso).slice(0, 10) : '');
-const relationOf = (p) => (p?.relation && p.relation !== 'device owner' ? p.relation : null)
-  || (relations.find((r) => (r.a === p?.id || r.b === p?.id))?.label) || null;
+const relationOf = (p) => {
+  if (!p) return null;
+  if (p.owner ?? p.is_owner) return 'you';
+  if (p.relation && p.relation !== 'device owner') return p.relation;
+  return relations.find((r) => r.a === p.id || r.b === p.id)?.label || null;
+};
 
 let memSearch = '';
 let memSession = null;            // a recording to narrow the shelf to
@@ -367,25 +371,6 @@ async function loadMemory() {
   renderMem();
 }
 
-// ---------- memory tabs: the actions board, or the shelf ----------
-function setMemTab(next) {
-  for (const b of document.querySelectorAll('#view-memory .memtab')) {
-    b.setAttribute('aria-selected', String(b.dataset.memtab === next));
-  }
-  const board = $('#actions-board');
-  const shelf = $('#view-memory .mem-grid');
-  if (board) board.hidden = next !== 'actions';
-  if (shelf) {
-    shelf.hidden = next !== 'shelf';
-    // The shelf is only built when it is on screen, so opening the tab draws it.
-    if (!shelf.hidden) renderMem();
-  }
-}
-
-for (const b of document.querySelectorAll('#view-memory .memtab')) {
-  b.addEventListener('click', () => setMemTab(b.dataset.memtab));
-}
-
 // One photo, saved to memory: Bonsai vision writes observations and the photo becomes
 // evidence for later answers. The file never leaves this Mac.
 $('#photo-btn')?.addEventListener('click', async () => {
@@ -410,8 +395,6 @@ $('#say-run')?.addEventListener('click', async () => {
 });
 
 function renderMem() {
-  // The shelf is its own tab; the Actions board renders itself.
-  if ($('#view-memory .mem-grid')?.hidden) return;
   renderField();
   renderLegend();
   renderRecordBar();
@@ -604,7 +587,9 @@ function renderField() {
     if (!matches(m)) continue;
     const key = m.person?.id || '_none';
     if (!groups.has(key)) {
-      groups.set(key, { name: m.person?.name || 'Miscellaneous', sub: relationOf(m.person) || '', items: [] });
+      // The memory payload carries {id, name}; the person record is what knows "you".
+      const full = m.person ? (people.find((p) => p.id === m.person.id) || m.person) : null;
+      groups.set(key, { name: m.person?.name || 'Miscellaneous', sub: relationOf(full) || '', items: [] });
     }
     groups.get(key).items.push(m);
   }

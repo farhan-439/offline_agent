@@ -111,25 +111,24 @@
         </div>
         <p id="dock-status" class="fine" hidden></p>
 
-        <div class="mem-tabs" role="tablist" aria-label="Memory view">
-          <button class="memtab" type="button" data-memtab="actions" role="tab" aria-selected="true">Actions</button>
-          <button class="memtab" type="button" data-memtab="shelf" role="tab" aria-selected="false">What’s kept</button>
-        </div>
-
-        <section id="actions-board" class="actions-board" aria-label="Things to do from memory">
-          <header class="actions-head">
-            <div><h2>Things to do</h2><p>Bonsai finds possible follow-through in what Pebble remembers. You review each one before it reaches a Mac app.</p></div>
-            <div class="actions-head-buttons"><button id="say-run" class="quiet" type="button" title="Listen once for “run”">Say “run”</button><button id="scan-actions" class="quiet" type="button">Compile actions</button><button id="run-actions" class="quiet" type="button" disabled>Run reviewed (0)</button></div>
-          </header>
-          <p id="actions-status" class="fine" role="status"></p>
-          <div id="run-review" class="run-review" hidden></div>
-          <div class="actions-layout">
-            <div id="action-list" class="action-list" aria-label="Proposed actions"></div>
-            <div id="action-detail" class="action-detail" aria-live="polite"></div>
-          </div>
-        </section>
-
-        <div class="mem-grid" hidden>
+        <div class="mem-grid">
+          <section id="actions-board" class="panel actions-panel" aria-labelledby="p-actions">
+            <header class="panel-head">
+              <h2 id="p-actions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.5 9 17l10.5-10"/></svg>Actions</h2>
+              <span id="actions-count" class="count"></span>
+            </header>
+            <div class="actions-tools">
+              <button id="say-run" class="act" type="button" title="Listen once for “run”">Say “run”</button>
+              <button id="scan-actions" class="act" type="button">Compile</button>
+              <button id="run-actions" class="act" type="button" disabled>Run (0)</button>
+            </div>
+            <p id="actions-status" class="fine actions-status" role="status"></p>
+            <div id="run-review" class="run-review" hidden></div>
+            <div class="actions-layout">
+              <div id="action-list" class="action-list" aria-label="Proposed actions"></div>
+              <div id="action-detail" class="action-detail" aria-live="polite"></div>
+            </div>
+          </section>
           <section class="panel field-panel" aria-labelledby="p-field">
             <header class="panel-head">
               <h2 id="p-field"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg>What Pebble keeps</h2>
