@@ -7,6 +7,8 @@ import http from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { translateReply, replyLanguage, REPLY_LANGUAGES } from './translate.mjs';
+import { MemorySupervisor } from './memory-supervisor.mjs';
+import { RunLog } from './run-log.mjs';
 import { pathToFileURL } from 'node:url';
 
 export const MEMORY_DOWN = 'Memory server not running. Start it: cd memory && npm run server';
@@ -59,13 +61,20 @@ export class KindredApp {
     bridgeOptions = {},
     emit = () => {},
     translate = translateReply,
+    superviseMemory = false,
+    runLog = null,
+    supervisorOptions = {},
   }) {
     this.translate = translate;
     this.repoRoot = repoRoot;
     this.purgeAskTemps();
     this.memoryUrl = memoryUrl.replace(/\/$/, '');
     this.fetchImpl = fetchImpl;
-    this.emit = emit;
+    this.runLog = runLog ?? new RunLog({ repoRoot: this.repoRoot });
+    this.emit = (type, payload) => {
+      if (type !== 'status' && type !== 'ask-state') this.runLog.write(type === 'log' ? 'capture-log' : type, type === 'log' ? { message: payload } : payload);
+      emit(type, payload);
+    };
     this.bridge = new CaptureBridge({ ...bridgeOptions, onEvent: (e) => this.onCaptureEvent(e) });
     this.live = new LiveWhisper({ bridge: this.bridge, memoryUrl: this.memoryUrl, fetchImpl, onEvent: (e) => this.onLiveEvent(e) });
     this.memory = { ok: false, message: 'Checking memory…' };
@@ -76,6 +85,16 @@ export class KindredApp {
     this.lastCaptureError = '';
     this.askState = { phase: 'idle', question: null, error: null };
     this.askListeningTask = null;
+    // The app starts memory itself (and restarts it) unless one is already running.
+    this.supervisor = superviseMemory ? new MemorySupervisor({ repoRoot: this.repoRoot, url: this.memoryUrl, ...supervisorOptions,
+      onEvent: (e) => this.onSupervisorEvent(e) }) : null;
+  }
+
+  onSupervisorEvent(e) {
+    this.emit('log', `memory: ${e.state}${e.message ? ` (${e.message})` : ''}${e.inMs ? ` in ${e.inMs} ms` : ''}`);
+    if (e.state === 'starting' || e.state === 'restarting') { this.memory = { ok: false, message: e.state === 'starting' ? 'Starting memory…' : 'Memory stopped; restarting it…' }; this.changed(); }
+    if (e.state === 'running' || e.state === 'external') this.checkMemory();
+    if (e.state === 'failed') { this.memory = { ok: false, message: e.message }; this.changed(); }
   }
 
   // ---------- status ----------
@@ -94,6 +113,7 @@ export class KindredApp {
       try { this.bridge.warm(); } catch (e) { this.capture = { ...this.capture, error: e.message, message: e.message }; }
     }
     this.changed();
+    if (this.supervisor) this.supervisor.start(); // memory comes up in the background; checkMemory follows it
     return this.checkMemory();
   }
 
@@ -127,6 +147,7 @@ export class KindredApp {
 
   // ---------- capture events ----------
   onCaptureEvent(e) {
+    if (['speaker', 'live', 'mic-live', 'mic-fallback', 'recording', 'processing', 'exit', 'tts-unavailable', 'translate-unavailable', 'translating'].includes(e.type)) this.runLog.write(`capture-${e.type}`, e);
     if (this.askState.phase !== 'idle' && ['recording', 'mic-live', 'processing'].includes(e.type)) {
       if (e.type === 'mic-live') this.setAskState({ phase: 'listening', device: e.device ?? null });
       if (e.type === 'processing') this.setAskState({ phase: 'processing' });
@@ -182,6 +203,7 @@ export class KindredApp {
   }
 
   onLiveEvent(e) {
+    this.runLog.write(`live-${e.type}`, e);
     if (e.type === 'identity') {
       this.upsertVoice(e.speaker, { name: e.name ?? null, owner: !!e.owner, score: e.score ?? null, checked: true });
       this.changed();
@@ -290,6 +312,7 @@ export class KindredApp {
     this.live.reset();
     this.lastWhisper = null;
     this.recording = { ...idleRecording(), mode, phase: 'starting', startedAt: Date.now() };
+    this.runLog.write('recording-start', { mode });
     this.changed();
     this.checkMemory(); // whispers need memory; recording works without it
     this.translationSpeech = Promise.resolve();
@@ -446,7 +469,9 @@ export class KindredApp {
   async ask(question, { speak = true } = {}) {
     const q = String(question ?? '').trim();
     if (!q) throw new Error('Type a question first.');
+    const askedAt = Date.now();
     const out = await this.request('/ask', { body: { question: q } });
+    this.runLog.write('ask', { question: q, ms: Date.now() - askedAt, grounded: !!out.grounded, cites: out.cites ?? [], answer: out.answer });
     const clips = (out.clips || []).map((c) => this.clip(c));
     const photos = (out.photos || []).map((p) => this.photo(p));
     const sources = out.sources?.length ? out.sources : (out.inputs || []).map((input) => ({
@@ -483,7 +508,7 @@ export class KindredApp {
   }
   stopSpeaking() { this.bridge.stopSpeaking(); return true; }
 
-  close() { this.bridge.close(); }
+  close() { this.bridge.close(); this.supervisor?.stop(); }
 }
 
 export function normalisePerson(p) {

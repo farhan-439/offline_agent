@@ -153,6 +153,7 @@ if (primary) app.whenReady().then(async () => {
       CaptureBridge: bridge.CaptureBridge,
       LiveWhisper: live.LiveWhisper,
       repoRoot: path.resolve(__dirname, '..'),
+      superviseMemory: process.env.KINDRED_SUPERVISE_MEMORY !== '0', // start/restart memory/src/server.mjs
       emit: (type, payload) => {
         if (type === 'log') { console.log(`[capture] ${payload}`); return; }
         broadcast(`kindred:${type}`, payload);

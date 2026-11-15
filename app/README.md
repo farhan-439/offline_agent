@@ -9,6 +9,17 @@ One hub window with three screens, a floating orb, and a small chat window opene
 | **Ask** | Text box → memory `/ask`. The answer is shown and spoken (Argmax TTSKit, Mac voice as fallback). Cited memory text and photos are shown, and each cited clip has a ▶ Play button for its time range. |
 | **Orb** | The one control for everything. Always-on-top bubble at the bottom of the screen; click it for a menu with three big choices: **Start recording**, **Ask a question** (type, or tap **Talk to Kindred** and speak), **Live translation**. While recording or translating, the card shows the timer, voices heard (with match %) or live translations, and one **Stop** button; the other choices are greyed out with the reason (they share the microphone). The orb stays an orb: recording adds a thin red ring and a pulsing red dot, translating a cyan ring and a 文A badge. Whispers ("This is Dr. Patel…") appear on the card over any view. Right-click for a menu. |
 
+## Start everything with one command
+
+From the repo root:
+```sh
+./kindred              # preflight → Bonsai (started if needed) → the app, which starts memory itself
+./kindred --demo       # with the demo memory (build it first: node scripts/demo-db.mjs)
+./kindred --check      # preflight only
+```
+- **The app supervises memory** (`memory-supervisor.mjs`). It starts `memory/src/server.mjs` with Electron's own Node 24 (`ELECTRON_RUN_AS_NODE`), restarts it if it dies (backoff 1 s → 15 s), and stops it on quit. It leaves alone a memory server that's already running. Logs go to `data/logs/memory.log`. `KINDRED_SUPERVISE_MEMORY=0` turns this off.
+- **The run log** (`run-log.mjs`) writes recognition scores, whispers, translations, replies, questions and errors to `data/logs/run-<date>.jsonl`, never voiceprints. Summarise it with `node scripts/analyze-run.mjs`, and turn it off with `KINDRED_LOG=0`.
+
 ## Run
 
 ```sh

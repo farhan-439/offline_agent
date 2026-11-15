@@ -26,7 +26,7 @@ import Argmax
 //                                                     {"id":1,"session":"…","jsonl":"…","audio":"…","utterances":n,"speakers":k}
 //   {"cmd":"record-cancel"}                        → {"id":1,"error":"Recording cancelled."}
 //   {"id":2,"cmd":"process","audio":"x.wav","place":"…","translate":true?} → same reply shape as record-stop
-//   {"id":3,"cmd":"speak","text":"This is Maya…","voice":"ryan"} → {"event":"speaking",…} then {"id":3,"spoken":true,…}
+//   {"id":3,"cmd":"speak","text":"This is Maya…","voice":"aiden"} → {"event":"speaking",…} then {"id":3,"spoken":true,…}
 //   {"cmd":"stop-speaking"}
 //   Two-way (during a translate recording): {"id":5,"cmd":"reply-start"} → {"id":5,"replying":true}, then
 //   {"id":6,"cmd":"reply-stop"} → {"id":6,"text":"<owner's English>","seconds":2.4}; {"cmd":"reply-cancel"}.
@@ -147,18 +147,21 @@ actor CaptureServer {
                                         onLive: { device in Out.send(["event": "mic-live", "id": id, "device": device, "ms": Int(Date().timeIntervalSince(started) * 1000)]) },
                                         onFallback: { from, to in Out.send(["event": "mic-fallback", "id": id, "from": from, "device": to]) })
             currentMic = mic
+            // Every recording gets a Muter: Kindred's own voice (whispers, translations, replies) through
+            // the speaker is dropped from live voiceprints, translation and the saved session.
+            let recMuter = Muter()
+            muter = recMuter
             defer { currentMic = nil; muter = nil; replyStart = nil }
             if live {
                 let ls = LiveSpeakers(id: id, session: session, mic: mic, embedder: speakers)
+                ls.muter = recMuter
                 if let liveStreamer { ls.startPro(streamer: liveStreamer) } else { ls.startRolling() }
                 Out.send(["event": "live", "id": id, "engine": liveStreamer == nil ? "pyannote-rolling" : "sortformer"])
                 liveSpeakers = ls
             }
             if translate {
                 // Chunks heard while the model finishes loading wait in the translator's queue.
-                let m = Muter()
-                muter = m
-                let t = LiveTranslator(id: id, muter: m, whisper: { await self.multilingual() })
+                let t = LiveTranslator(id: id, muter: recMuter, whisper: { await self.multilingual() })
                 mic.onIndexedChunk = { t.feed($0, at: $1) }
                 translator = t
                 Out.send(["event": "translating", "id": id, "model": env("KINDRED_WHISPER_MULTI_VARIANT") ?? defaultMultiVariant])
@@ -180,7 +183,7 @@ actor CaptureServer {
             try writeWAV(audio, sampleRate: 16000, to: wav)
             let multi = translate ? await multilingual() : nil
             reply(id, try await writeSession(audio: audio, audioPath: wav.path, session: session, place: place, startedAt: started,
-                                             outDir: outDir, whisper: whisper, speakers: speakers, multilingual: multi))
+                                             outDir: outDir, whisper: whisper, speakers: speakers, multilingual: multi, muter: muter))
         } catch {
             Out.send(["id": id, "error": error.localizedDescription])
         }
@@ -254,8 +257,10 @@ actor CaptureServer {
         stopSpeech = stop
         let started = Date()
         let firstChunk = Locked<Int?>(nil)
-        // During a recording, live translation ignores the mic while we speak (+0.6 s echo tail).
-        let mute = muter, mic = currentMic
+        // During a recording, mark Kindred's own voice (+0.6 s echo tail) so it's dropped from live
+        // translation, live voiceprints and the saved session. Only through a loudspeaker: earbuds
+        // can't be heard by the mic, and dropping that stretch would lose real speech.
+        let mute = outputIsLoudspeaker() ? muter : nil, mic = currentMic
         mute?.begin("speaking", at: mic?.samples.get().count ?? 0)
         speakingTask = Task {
             defer { mute?.end("speaking", at: (mic?.samples.get().count ?? 0) + 9600) }

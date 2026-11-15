@@ -128,7 +128,9 @@ func loadTTS() async throws -> TTSKit {
 }
 
 /// Ryan and Aiden are Qwen3-TTS's native-English voices.
-func voice(_ name: String? = nil) -> Qwen3Speaker { Qwen3Speaker(rawValue: name ?? env("KINDRED_VOICE") ?? "ryan") ?? .ryan }
+/// Default voice "aiden": in an 11/15 test (8 lines × 3 takes, scored by Whisper) ryan ran long, laughed or
+/// produced noise on 7–9 of 24 clips even with calm sampling; aiden with calm sampling on 1 of 24.
+func voice(_ name: String? = nil) -> Qwen3Speaker { Qwen3Speaker(rawValue: name ?? env("KINDRED_VOICE") ?? "aiden") ?? .aiden }
 
 /// Sampling tuned in Second Nature for short, natural lines. Budget scales with text length
 /// (Kindred whisper lines are ≤ ~30 words / 220 chars).
@@ -136,8 +138,15 @@ func whisperLineOptions(chars: Int, language: Qwen3Language = .english) -> Gener
     // Qwen3-TTS emits ~12 audio tokens a second. One Chinese/Japanese/Korean character is a whole
     // syllable, so budget per character there, or long lines get cut off.
     let dense: Set<Qwen3Language> = [.chinese, .japanese, .korean]
-    let budget = dense.contains(language) ? chars * 5 + 20 : chars + 20
-    return GenerationOptions(temperature: 0.9, topK: 50, repetitionPenalty: 1.08, maxNewTokens: min(240, max(60, budget)), concurrentWorkerCount: 1)
+    // Tunable while we test (KINDRED_TTS_TEMPERATURE / _TOPK / _PENALTY / _BUDGET = tokens per character).
+    // Calm, plain delivery (no laughs or expressive noises): lower temperature and top-K than the
+    // expressive profile, and a tighter token budget so the model can't ramble past the words.
+    let temperature = env("KINDRED_TTS_TEMPERATURE").flatMap(Float.init) ?? 0.5
+    let topK = env("KINDRED_TTS_TOPK").flatMap(Int.init) ?? 20
+    let penalty = env("KINDRED_TTS_PENALTY").flatMap(Float.init) ?? 1.1
+    let perChar = env("KINDRED_TTS_BUDGET").flatMap(Double.init) ?? 0.9
+    let budget = dense.contains(language) ? chars * 5 + 20 : Int(Double(chars) * perChar) + 20
+    return GenerationOptions(temperature: temperature, topK: topK, repetitionPenalty: penalty, maxNewTokens: min(240, max(40, budget)), concurrentWorkerCount: 1)
 }
 
 /// BCP-47 code ("fr", "zh-CN") → a language Qwen3-TTS can speak, or nil if it can't.
@@ -149,7 +158,7 @@ func ttsLanguage(_ code: String?) -> Qwen3Language? {
 }
 
 /// The voice for a language: Qwen3-TTS's native speakers where it has one, else the English default
-/// (KINDRED_VOICE, "ryan"). An explicit voice name always wins.
+/// (KINDRED_VOICE, default "aiden"). An explicit voice name always wins.
 func voice(_ name: String?, for language: Qwen3Language) -> Qwen3Speaker {
     if let name, let v = Qwen3Speaker(rawValue: name) { return v }
     switch language {
