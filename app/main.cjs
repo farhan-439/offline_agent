@@ -1,6 +1,6 @@
 // Kindred desktop shell. Window/orb/shortcut/IPC pattern adapted from local_ai (Second Nature);
 // all logic lives in core.mjs so it can be tested without Electron.
-const { app, BrowserWindow, Menu, globalShortcut, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, ipcMain, screen, dialog } = require('electron');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
@@ -133,6 +133,18 @@ if (primary) app.whenReady().then(async () => {
     if (!name) return reject(new Error('Unknown Mac app.'));
     execFile('/usr/bin/open', ['-a', name], (error) => error ? reject(error) : resolve({ opened: name }));
   })));
+  // One photo from this Mac into memory. The picker runs in the main process; the bytes never
+  // leave the machine.
+  ipcMain.handle('photos:add', safe(async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(hub, {
+      title: 'Add a photo to Pebble memory',
+      buttonLabel: 'Save to memory',
+      properties: ['openFile'],
+      filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic'] }],
+    });
+    if (canceled || !filePaths?.length) return { cancelled: true };
+    return need().addPhoto(filePaths[0]);
+  }));
   ipcMain.handle('memory:dock', safe(() => need().dock()));
   ipcMain.handle('memory:ask', safe((q) => need().ask(q)));
   ipcMain.handle('ask:listen-start', safe(() => need().startAskListening()));

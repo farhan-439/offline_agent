@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isRunPhrase, spokenTimes, spokenDate, spokenDetails } from '../voice-run.mjs';
+import { isRunPhrase, spokenTimes, spokenDate, spokenDetails, spokenLength } from '../voice-run.mjs';
 
 test('only real "run" phrases start a run', () => {
   for (const phrase of ['run', 'Run it', 'hey Pebble, run', 'please run', 'do it', 'add it to my calendar', 'put it in reminders']) {
@@ -36,4 +36,15 @@ test('a spoken time lands in the right field for each kind of action', () => {
   assert.deepEqual(spokenDetails('run at 9 am', calendar), { time: '09:00' });
   // nothing said, nothing invented
   assert.deepEqual(spokenDetails('run', calendar), {});
+});
+
+test('an event length is only used when it was said', () => {
+  assert.equal(spokenLength('run at 9 for an hour'), 60);
+  assert.equal(spokenLength('run for half an hour'), 30);
+  assert.equal(spokenLength('run for 45 minutes'), 45);
+  assert.equal(spokenLength('run at 9'), null);
+  assert.deepEqual(
+    spokenDetails('run tomorrow at 9 am for 90 minutes', { target: 'calendar' }),
+    { date: '2026-11-16', time: '09:00', durationMinutes: 90 },
+  );
 });

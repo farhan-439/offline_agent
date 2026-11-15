@@ -54,12 +54,26 @@ export function spokenDate(text, now = new Date()) {
   return null;
 }
 
+/** "for an hour", "for 45 minutes" — the length of one event, if it was said. */
+export function spokenLength(text) {
+  const s = String(text ?? '').toLowerCase();
+  if (/\bhalf an hour\b/.test(s)) return 30;
+  if (/\ban hour\b|\bone hour\b/.test(s)) return 60;
+  const m = s.match(/\bfor (\d{1,3}) ?(?:minutes?|mins?)\b/);
+  if (m) return Number(m[1]);
+  const words = { fifteen: 15, twenty: 20, thirty: 30, forty: 40, fortyfive: 45, fifty: 50, sixty: 60, ninety: 90 };
+  const w = s.match(/\bfor (fifteen|twenty|thirty|forty|forty five|fifty|sixty|ninety) minutes?\b/);
+  return w ? words[w[1].replace(/\s+/g, '')] ?? null : null;
+}
+
 /** What the owner said, applied on top of a draft — never anything they did not say. */
 export function spokenDetails(text, draft = {}) {
   const times = spokenTimes(text);
   const date = spokenDate(text);
   const out = {};
   if (date) out.date = date;
+  const length = spokenLength(text);
+  if (length && draft.target === 'calendar') out.durationMinutes = length;
   if (!times.length) return out;
   if (draft.target === 'reminders' && Number(draft.timesPerDay || 1) > 1) out.times = times.slice(0, 8);
   else out.time = times[0];

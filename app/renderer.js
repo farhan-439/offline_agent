@@ -386,6 +386,22 @@ for (const b of document.querySelectorAll('#view-memory .memtab')) {
   b.addEventListener('click', () => setMemTab(b.dataset.memtab));
 }
 
+// One photo, saved to memory: Bonsai vision writes observations and the photo becomes
+// evidence for later answers. The file never leaves this Mac.
+$('#photo-btn')?.addEventListener('click', async () => {
+  const btn = $('#photo-btn');
+  const status = $('#actions-status');
+  btn.disabled = true; btn.textContent = 'Reading photo…';
+  try {
+    const r = await api.addPhoto();
+    if (!r.ok) { if (status) status.textContent = r.error || 'Could not read that photo.'; return; }
+    if (r.value?.cancelled) return;
+    if (status) status.textContent = r.value?.photo?.caption ? `Saved: ${r.value.photo.caption}` : 'Photo saved to memory.';
+    await loadMemory();
+    void actions.scan();
+  } finally { btn.disabled = false; btn.textContent = 'Add photo'; }
+});
+
 $('#say-run')?.addEventListener('click', async () => {
   const status = $('#actions-status');
   if (status) status.textContent = 'Listening for “run”…';

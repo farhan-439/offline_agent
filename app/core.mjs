@@ -511,6 +511,34 @@ export class KindredApp {
     return this.request('/layers', { method: 'GET' });
   }
 
+  /**
+   * One local photo into memory. The bytes go straight to the memory server as a raw body;
+   * Bonsai vision turns them into observations and the photo becomes citable evidence.
+   * Nothing is uploaded anywhere else.
+   */
+  async addPhoto(file, { note = null, people = [] } = {}) {
+    const ext = path.extname(String(file)).toLowerCase();
+    const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic' }[ext];
+    if (!mime) throw new Error('That file is not a photo Pebble can read (JPEG, PNG, WebP, GIF, HEIC).');
+    const buffer = readFileSync(file);
+    const query = new URLSearchParams();
+    if (note) query.set('note', String(note).slice(0, 300));
+    if (people.length) query.set('people', people.join(','));
+    const qs = query.toString();
+    let res;
+    try {
+      res = await this.fetchImpl(`${this.memoryUrl}/upload-photo${qs ? `?${qs}` : ''}`, {
+        method: 'POST', headers: { 'content-type': mime }, body: buffer,
+        timeoutMs: 120000, signal: AbortSignal.timeout(120000),
+      });
+    } catch (e) {
+      throw new MemoryDownError(e);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `photo upload failed (${res.status})`);
+    return data;
+  }
+
   /** Bonsai drafts useful follow-through; nothing leaves Pebble until a person confirms. */
   async actionSuggestions() {
     const r = await this.request('/action-suggestions', { method: 'GET' });

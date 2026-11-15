@@ -283,7 +283,11 @@ export function mountActions(api, { play }) {
     }
 
     selected = draft.id;
-    const edited = { ...draft.payload, ...spokenDetails(phrase, draft) };
+    // "for five days" is stored as the draft's duration; the export calls that occurrences.
+    const counted = draft.target === 'reminders' && draft.payload?.duration
+      ? { occurrences: draft.payload.duration }
+      : {};
+    const edited = { ...draft.payload, ...counted, ...spokenDetails(phrase, draft) };
     let checked;
     try { checked = await api.validateAction(draft.id, edited); }
     catch (error) { checked = { ok: false, error: error.message }; }

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('kindred', {
   addAction: (id, details) => ipcRenderer.invoke('actions:add', id, details),
   openActionApp: (target) => ipcRenderer.invoke('actions:open-app', target),
   dock: () => ipcRenderer.invoke('memory:dock'),
+  addPhoto: () => ipcRenderer.invoke('photos:add'),
   ask: (question) => ipcRenderer.invoke('memory:ask', question),
   startAskListening: () => ipcRenderer.invoke('ask:listen-start'),
   stopAskListening: () => ipcRenderer.invoke('ask:listen-stop'),
