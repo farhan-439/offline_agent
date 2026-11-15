@@ -36,11 +36,15 @@ function summarise(db, kind, payload) {
     if (payload.person) {
       const pid = resolvePersonId(db, payload.person);
       const n = pid ? db.prepare("SELECT count(*) n FROM facts f WHERE f.status = 'active' AND (f.person_id = ? OR EXISTS (SELECT 1 FROM fact_people fp WHERE fp.fact = f.rowid AND fp.person_id = ?))").get(pid, pid).n : 0;
-      return `Hide ${n} extracted ${n === 1 ? 'fact' : 'facts'} about ${payload.person}? Original recordings and episode summaries remain available.`;
+      return `Forget ${n} ${n === 1 ? 'memory' : 'memories'} about ${payload.person}? They stop shaping answers. The conversations they came from stay in your history.`;
     }
     const f = factRow(db, payload.ref);
-    return f ? `Hide the extracted fact "${f.text}"? Original recordings remain available.`
-      : `Hide extracted facts matching "${payload.query ?? payload.ref ?? ''}"? Original recordings remain available.`;
+    if (!f) return `Forget memories matching "${payload.query ?? payload.ref ?? ''}"? They stop shaping answers; the conversations stay in your history.`;
+    const what = f.origin === 'user' ? 'the memory you added' : 'this memory';
+    const tail = f.origin === 'user'
+      ? 'It disappears from the Ledger. Nothing else changes.'
+      : 'It stops shaping answers. The conversation it came from stays in your history.';
+    return `Forget ${what}: "${f.text}"? ${tail}`;
   }
   return null;
 }
@@ -94,8 +98,8 @@ function applyCorrection(db, payload) {
   if (!old) throw new Error(`no such memory: ${payload.ref}`);
   const r = (() => {
     db.prepare("UPDATE facts SET status = 'superseded' WHERE rowid = ?").run(old.rowid);
-    const ins = db.prepare('INSERT INTO facts (person_id, kind, text, when_text, when_resolved, evidence, session, episode, observed_at, about_raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(old.person_id, old.kind, String(payload.text).trim(), old.when_text, old.when_resolved, '[]', old.session, old.episode, now(), 'user-confirmed correction');
+    const ins = db.prepare('INSERT INTO facts (person_id, kind, text, when_text, when_resolved, evidence, session, episode, observed_at, about_raw, origin, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(old.person_id, old.kind, String(payload.text).trim(), old.when_text, old.when_resolved, '[]', old.session, old.episode, now(), 'user-confirmed correction', 'user', old.scope ?? 'all');
     const name = db.prepare('SELECT name FROM people WHERE id = ?').get(old.person_id)?.name ?? '';
     db.prepare('INSERT INTO facts_fts (rowid, text, person, kind) VALUES (?, ?, ?, ?)').run(ins.lastInsertRowid, String(payload.text), name, old.kind);
     for (const p of db.prepare('SELECT person_id, role FROM fact_people WHERE fact = ?').all(old.rowid))
