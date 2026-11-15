@@ -41,8 +41,9 @@ function show(view) {
     const on = nav.dataset.view === view;
     if (on) nav.setAttribute('aria-current', 'page'); else nav.removeAttribute('aria-current');
   }
-  for (const v of ['capture', 'chat', 'memory']) $(`#view-${v}`).hidden = v !== view;
+  for (const v of ['capture', 'chat', 'memory', 'atlas']) $(`#view-${v}`).hidden = v !== view;
   if (view === 'memory') loadMemory();
+  if (view === 'atlas') loadAtlas();
   if (view === 'chat') $('#ask-input').focus();
   if (view === 'capture' && mode === 'ask') $('#quick-input').focus();
 }
@@ -724,5 +725,383 @@ api.onAskState((state) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { api.stopSpeaking(); player.pause(); }
 });
+
+// ---------- atlas: the whole memory as a map ----------
+// Only stored relationships are drawn: fact → person, fact → session, person ↔ person.
+// Raw inputs are deliberately NOT wired to anything — they are memories with no recorded session.
+const ATLAS_CAP = 6;      // facts a person shows before the rest fold into a count
+const ATLAS_BUDGET = 40;  // facts drawn at once, so a large memory still reads at a glance
+const atlasExpanded = new Set();
+
+async function loadAtlas() {
+  const [p, m, i] = await Promise.all([api.people(), api.memories(), api.inputs()]);
+  if (p.ok) people = p.value.people || [];
+  if (m.ok) memories = m.value.memories || [];
+  if (i.ok) inputs = i.value.inputs || [];
+  drawAtlas();
+}
+
+let atlasTip = null;
+function showTip(text, evt) {
+  const canvas = $('#atlas-canvas');
+  if (!canvas || !text) return;
+  if (!atlasTip) {
+    atlasTip = document.createElement('div');
+    atlasTip.className = 'atlas-tip';
+    canvas.append(atlasTip);
+  }
+  atlasTip.textContent = text;
+  atlasTip.hidden = false;
+  const box = canvas.getBoundingClientRect();
+  const x = Math.min(evt.clientX - box.left + 12, box.width - 250);
+  const y = Math.min(evt.clientY - box.top + 14, box.height - 56);
+  atlasTip.style.left = `${Math.max(4, x)}px`;
+  atlasTip.style.top = `${Math.max(4, y)}px`;
+}
+function hideTip() { if (atlasTip) atlasTip.hidden = true; }
+
+function drawAtlas() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = $('#atlas-svg');
+  svg.replaceChildren();
+  $('#raw-count').textContent = String(inputs.length);
+
+  const el = (tag, attrs = {}, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  const sessionCount = new Set(memories.map((m) => m.source?.session).filter(Boolean)).size;
+  $('#atlas-summary').textContent = `${people.length} people · ${memories.length} facts · ${sessionCount} sessions · ${inputs.length} raw inputs`;
+
+  if (!memories.length && !people.length) {
+    svg.append(el('text', { x: 500, y: 360, class: 'a-empty' }, 'Nothing mapped yet. Record something, then dock.'));
+    return;
+  }
+
+  const W = 1000, H = 720, CX = 500, CY = 350;
+
+  // People are hubs; a fact with no person lands in an "Unsorted" hub.
+  const byPerson = new Map();
+  for (const m of memories) {
+    const id = m.person?.id || '_none';
+    if (!byPerson.has(id)) byPerson.set(id, { id, name: m.person?.name || 'Unsorted', facts: [] });
+    byPerson.get(id).facts.push(m);
+  }
+  for (const person of people) {
+    if (!byPerson.has(person.id)) byPerson.set(person.id, { id: person.id, name: person.name, facts: [] });
+  }
+  const hubs = [...byPerson.values()].map((h) => ({
+    ...h,
+    person: people.find((p) => p.id === h.id) || null,
+    facts: [...h.facts].sort((a, b) => String(a.ref).localeCompare(String(b.ref))),
+  })).sort((a, b) => b.facts.length - a.facts.length || a.name.localeCompare(b.name));
+
+  const n = Math.max(hubs.length, 1);
+  // People sit on a ring that widens with the crowd, so names stay apart.
+  const R = n === 1 ? 0 : Math.min(215, 118 + n * 7);
+  hubs.forEach((h, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    h.ang = a;
+    h.x = CX + Math.cos(a) * R;
+    h.y = CY + Math.sin(a) * R;
+  });
+
+  // What the map draws: people you opened, small groups, then a fixed budget of facts.
+  // A fact that is not drawn is never given a stray line or an orphan session.
+  let budget = ATLAS_BUDGET;
+  for (const h of hubs) {
+    h.open = atlasExpanded.has(h.id) || h.facts.length <= ATLAS_CAP;
+    if (h.open) budget -= h.facts.length;
+  }
+  for (const h of hubs) {
+    if (h.open || h.facts.length > budget) continue;
+    h.open = true;
+    budget -= h.facts.length;
+  }
+
+  const factNodes = [];
+  for (const h of hubs) {
+    if (!h.open) continue;
+    h.facts.forEach((f, i) => {
+      const a = h.ang + (i - (h.facts.length - 1) / 2) * 0.30;
+      factNodes.push({ f, hub: h, x: h.x + Math.cos(a) * 84, y: h.y + Math.sin(a) * 84 });
+    });
+  }
+
+  // A large memory is drawn in part; say so rather than imply the map is complete.
+  if (factNodes.length < memories.length) {
+    $('#atlas-summary').textContent += ` · showing ${factNodes.length} facts`;
+  }
+
+  // Sessions sit on an outer ring, at the average direction of their facts.
+  const sessionMap = new Map();
+  for (const node of factNodes) {
+    const id = node.f.source?.session;
+    if (!id) continue;
+    if (!sessionMap.has(id)) sessionMap.set(id, { id, facts: [] });
+    sessionMap.get(id).facts.push(node);
+  }
+  const SESSION_R = 322;
+  const sessionNodes = [...sessionMap.values()].sort((a, b) => a.id.localeCompare(b.id));
+  for (const s of sessionNodes) {
+    const mx = s.facts.reduce((t, f) => t + f.x, 0) / s.facts.length;
+    const my = s.facts.reduce((t, f) => t + f.y, 0) / s.facts.length;
+    s.dir = Math.atan2(my - CY, mx - CX);
+    s.label = s.id.length > 16 ? `${s.id.slice(0, 15)}…` : s.id;
+    s.w = Math.max(54, s.label.length * 6.4 + 16);
+  }
+
+  // Session pills keep their stored direction unless that would stack them:
+  // nudge each one past the previous, and spread evenly once the ring is full.
+  const ring = [...sessionNodes].sort((a, b) => a.dir - b.dir);
+  const sep = (s) => Math.min(0.60, (s.w + 18) / SESSION_R);
+  const need = ring.reduce((t, s) => t + sep(s), 0);
+  if (need >= Math.PI * 2 * 0.94) {
+    const step = (Math.PI * 2) / Math.max(ring.length, 1);
+    ring.forEach((s, i) => { s.dir = -Math.PI / 2 + i * step; });
+  } else {
+    for (let i = 1; i < ring.length; i++) {
+      const min = ring[i - 1].dir + sep(ring[i - 1]);
+      if (ring[i].dir < min) ring[i].dir = min;
+    }
+    const wrap = ring.length ? ring[ring.length - 1].dir - (ring[0].dir + Math.PI * 2 - sep(ring[ring.length - 1])) : 0;
+    if (wrap > 0) for (const s of ring) s.dir -= wrap;
+  }
+  for (const s of sessionNodes) {
+    s.x = CX + Math.cos(s.dir) * SESSION_R;
+    s.y = CY + Math.sin(s.dir) * SESSION_R;
+  }
+
+  const edges = [];
+
+  // fact → session (drawn first so it sits behind the nodes)
+  for (const s of sessionNodes) {
+    for (const f of s.facts) {
+      const ctrl = [(f.x + s.x) / 2, (f.y + s.y) / 2];
+      const path = el('path', { class: 'a-edge', d: `M ${f.x} ${f.y} Q ${ctrl[0]} ${ctrl[1]} ${s.x} ${s.y}` });
+      svg.append(path);
+      edges.push({ path, a: f.f.ref, b: `s:${s.id}` });
+    }
+  }
+
+  // person ↔ person
+  for (const rel of relations) {
+    const A = hubs.find((h) => h.id === rel.a), B = hubs.find((h) => h.id === rel.b);
+    if (!A || !B) continue;
+    const path = el('path', { class: 'a-edge rel', d: `M ${A.x} ${A.y} L ${B.x} ${B.y}` });
+    svg.append(path);
+    edges.push({ path, a: `p:${A.id}`, b: `p:${B.id}` });
+  }
+
+  // person → fact, only for facts that are actually drawn
+  const shownFacts = factNodes;
+  for (const node of shownFacts) {
+    const path = el('path', { class: 'a-edge', d: `M ${node.hub.x} ${node.hub.y} L ${node.x} ${node.y}` });
+    svg.append(path);
+    edges.push({ path, a: `p:${node.hub.id}`, b: node.f.ref });
+  }
+
+  // A busy map keeps its lines faint until something is hovered.
+  svg.dataset.busy = String(edges.length > 80);
+
+  const hot = (key) => {
+    for (const e of edges) {
+      if (e.a === key || e.b === key) e.path.classList.add('hot');
+      else e.path.classList.remove('hot');
+    }
+  };
+  const cold = () => { for (const e of edges) e.path.classList.remove('hot'); };
+
+  const bind = (g, key, onClick, title) => {
+    g.addEventListener('mouseenter', (e) => { hot(key); showTip(title, e); });
+    g.addEventListener('mousemove', (e) => showTip(title, e));
+    g.addEventListener('mouseleave', () => { cold(); hideTip(); });
+    g.addEventListener('click', onClick);
+    if (title) {
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('role', 'button');
+      g.setAttribute('aria-label', title);
+      g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } });
+    }
+    svg.append(g);
+    return g;
+  };
+
+  // people
+  for (const h of hubs) {
+    const g = el('g', { class: `a-node a-person${h.id === '_none' ? ' unsorted' : ''}` });
+    g.append(el('circle', { cx: h.x, cy: h.y, r: 22 }));
+    g.append(el('text', { x: h.x, y: h.y + 38 }, h.name));
+    const collapsed = !h.open;
+    bind(g, `p:${h.id}`, () => {
+      if (collapsed) { atlasExpanded.add(h.id); drawAtlas(); }
+      else openPersonSheet(h);
+    }, collapsed ? `${h.name} — open ${h.facts.length} facts` : `${h.name} — ${h.facts.length} facts`);
+
+    if (collapsed) {
+      // The count sits under the name, so it is obvious whose facts are folded away.
+      const cx = h.x, cy = h.y + 58;
+      const badge = el('g', { class: 'a-node a-count' });
+      badge.append(el('rect', { x: cx - 30, y: cy - 11, width: 60, height: 22, rx: 11 }));
+      badge.append(el('text', { x: cx, y: cy + 4 }, `${h.facts.length} facts`));
+      bind(badge, `p:${h.id}`, () => { atlasExpanded.add(h.id); drawAtlas(); },
+        `Open the ${h.facts.length} facts stored for ${h.name}`);
+    }
+  }
+
+  // facts: hover for the sentence, click for the whole record
+  for (const node of shownFacts) {
+    const g = el('g', { class: 'a-node a-fact' });
+    g.append(el('circle', { cx: node.x, cy: node.y, r: 6.5 }));
+    bind(g, node.f.ref, () => openFactSheet(node.f), `${node.f.text} — ${node.hub.name}`);
+  }
+
+  // sessions
+  for (const s of sessionNodes) {
+    const g = el('g', { class: 'a-node a-session' });
+    g.append(el('rect', { x: s.x - s.w / 2, y: s.y - 11, width: s.w, height: 22, rx: 6 }));
+    g.append(el('text', { x: s.x, y: s.y + 4 }, s.label));
+    bind(g, `s:${s.id}`, () => openSessionSheet(s), `Session ${s.id} — ${s.facts.length} facts`);
+  }
+}
+
+// ---------- atlas sheet ----------
+function closeSheet() {
+  const sheet = $('#atlas-sheet');
+  sheet.hidden = true;
+  sheet.replaceChildren();
+}
+
+function sheetChip(text, cls = 'other') {
+  const s = document.createElement('span');
+  s.className = `tag ${cls}`;
+  s.textContent = text;
+  return s;
+}
+
+function sheetText(text, cls) {
+  const p = document.createElement('p');
+  if (cls) p.className = cls;
+  p.textContent = text;
+  return p;
+}
+
+function factList(facts, onPick) {
+  const ul = document.createElement('ul');
+  ul.className = 'sheet-list';
+  for (const f of facts) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    const ref = document.createElement('span');
+    ref.className = 'ref';
+    ref.textContent = f.ref;
+    b.append(ref, document.createTextNode(f.text));
+    b.addEventListener('click', () => onPick(f));
+    li.append(b);
+    ul.append(li);
+  }
+  return ul;
+}
+
+function openSheet(title, meta, body) {
+  const sheet = $('#atlas-sheet');
+  sheet.replaceChildren();
+  const head = document.createElement('div');
+  head.className = 'sheet-head';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  const close = document.createElement('button');
+  close.type = 'button'; close.className = 'act'; close.textContent = 'Close';
+  close.addEventListener('click', closeSheet);
+  head.append(h, close);
+  sheet.append(head);
+  if (meta.length) {
+    const m = document.createElement('div');
+    m.className = 'sheet-meta';
+    m.append(...meta);
+    sheet.append(m);
+  }
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'sheet-body';
+  bodyEl.append(...body);
+  sheet.append(bodyEl);
+  sheet.hidden = false;
+  sheet.scrollTop = 0;
+}
+
+function openFactSheet(m) {
+  const meta = [sheetChip(m.person?.name || 'Unsorted'), sheetChip(m.kind, kindClass(m.kind)), sheetChip(m.origin || 'extracted')];
+  if (m.createdAt) meta.push(sheetChip(dateOnly(m.createdAt)));
+  if (m.uses) meta.push(sheetChip(`${m.uses} uses`));
+  const body = [sheetText(m.text)];
+  body.push(m.source?.quote?.text
+    ? sheetText(`“${m.source.quote.text}”`, 'q')
+    : sheetText('No spoken quote was saved for this fact.'));
+  if (m.source?.quote?.audioUrl) {
+    const playBtn = document.createElement('button');
+    playBtn.type = 'button'; playBtn.className = 'act'; playBtn.textContent = 'Play the moment';
+    playBtn.addEventListener('click', () => play({
+      url: m.source.quote.audioUrl,
+      start: Number(m.source.quote.start),
+      end: Number(m.source.quote.end),
+    }));
+    body.push(playBtn);
+  }
+  openSheet(`${m.ref} · ${m.text}`, meta, body);
+}
+
+function openPersonSheet(h) {
+  const p = h.person;
+  const meta = [sheetChip(p && (p.owner ?? p.is_owner) ? 'You' : (p?.relation || relationOf(p || { id: h.id, name: h.name })) || 'Relation unknown')];
+  meta.push(sheetChip(`${h.facts.length} ${h.facts.length === 1 ? 'fact' : 'facts'}`));
+  if (p?.voiceSamples) meta.push(sheetChip('voice known'));
+  const body = [];
+  body.push(sheetText(p?.core || `${h.name} has no core memory card yet.`));
+  if (h.facts.length) body.push(factList(h.facts, openFactSheet));
+  openSheet(h.name, meta, body);
+}
+
+function openSessionSheet(s) {
+  const meta = [sheetChip(`${s.facts.length} ${s.facts.length === 1 ? 'fact' : 'facts'}`), sheetChip('recorded session')];
+  const body = [sheetText('These facts were heard in this recording. Every link here comes from the session saved on the fact.')];
+  body.push(factList(s.facts.map((f) => f.f), openFactSheet));
+  openSheet(`Session ${s.id}`, meta, body);
+}
+
+function openInputSheet(x) {
+  const meta = [sheetChip(x.id), sheetChip(dateOnly(x.createdAt))];
+  openSheet(`Input ${x.id}`, meta, [sheetText(x.text), sheetText('This is a typed input. Memory holds no session for it, so it is not linked to any fact.')]);
+}
+
+function openRawSheet() {
+  const meta = [sheetChip(`${inputs.length} inputs`), sheetChip('not linked to sessions')];
+  const body = [sheetText('Typed inputs are memories in their own right. Nothing in the data says they came from a recorded session, so they are not connected to one here.')];
+  if (!inputs.length) body.push(sheetText('No raw inputs stored yet.'));
+  else {
+    const ul = document.createElement('ul');
+    ul.className = 'sheet-list';
+    for (const x of inputs.slice(0, 120)) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      const ref = document.createElement('span');
+      ref.className = 'ref';
+      ref.textContent = x.id;
+      b.append(ref, document.createTextNode(x.text.length > 90 ? `${x.text.slice(0, 89)}…` : x.text));
+      b.addEventListener('click', () => openInputSheet(x));
+      li.append(b);
+      ul.append(li);
+    }
+    body.push(ul);
+  }
+  openSheet('Raw inputs', meta, body);
+}
+
+$('#raw-group').addEventListener('click', openRawSheet);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 setMode('record');

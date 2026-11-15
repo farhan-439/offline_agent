@@ -1,12 +1,13 @@
 # app/ — Pebble desktop app (Electron)
 
-One hub window with three screens, a floating mark, and a small chat window opened by the mark. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
+One hub window with four screens, a floating mark, and a small chat window opened by the mark. Everything runs on this Mac with Wi-Fi off: system fonts, no CDN, local assets only.
 
 | Screen | What it does |
 |---|---|
 | **Capture** (main page) ⬅ the stone | The mark is the button. A switch above it sets what a tap does — **Record** (the room, out loud), **Ask** (type or speak a question), **Translate** (their language → English). Labels say which one is running and why the others are unavailable while the microphone is busy. On stop, the session file is sent to memory `/ingest`. |
 | **Chat** | Questions and answers from memory `/ask`. Answers are spoken (Argmax TTSKit, Mac voice fallback) and carry a **N sources** chip that expands to the cited memories and their audio. |
 | **Memory** | Four areas, all reading real endpoints — see below. Keeps **Dock today** and **My voice**. |
+| **Atlas** | The whole memory as one map: people, their facts, and the sessions they were heard in. Only stored links are drawn. |
 | **The mark** | The five-bar mark is the button on Capture. The always-on-top floating version is **switched off for now** (`createOrb()` / `createChat()` still exist in `main.cjs`, but nothing is drawn outside the window). |
 
 ## Capture: the three modes and the live transcript
@@ -28,6 +29,18 @@ The layout is table-first, the way a CRM record works: a list you scan, a list y
 | **Memory map** (right, full height) | the chosen fact + `GET /traces` | A diagram in two modes. **Fact**: the person above, the fact in the middle with that person's other facts beside it, and the conversation it was heard in below — labelled `WHO / WHAT IT KNOWS / WHERE IT WAS HEARD`. **Recalls**: the question, the refs Bonsai retrieved (cited ones in moss, retrieved-only in grey), the answer, and ‹ › to step through recent recalls. The footer carries the fact's ref, date, scope, uses, the original quote and **Play**. |
 
 Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
+
+## Atlas (the whole memory as one map)
+
+A fourth rail item, and the answer to "what is actually in here?". The map is built from stored links only — fact → person, fact → session, person ↔ person — so every line corresponds to something the database recorded.
+
+- **People** are hubs on a ring; their facts orbit them as small dots. Hover a dot for its sentence; click it for the full record (fact, person, date, the spoken quote, audio, and the session it came from).
+- **Recorded sessions** sit on the outer ring, in the direction of the facts heard in them. A session appears only when at least one of its facts is drawn, so no pill dangles at the end of a line pointing at nothing.
+- **Folding**: a person with more than six facts keeps them behind an `N facts` badge under their name. Click the badge to open them.
+- **Volume**: a memory of hundreds of facts still has to read at a glance, so small groups open in full, the rest fill a fixed budget of drawn facts, and the header says so (`· showing 48 facts`). Session pills keep their stored direction unless that would stack them, and a busy map keeps its lines faint until you hover one thing.
+- **Raw inputs stay separate.** The bottom-left card (`N · not linked to any session`) opens the list of typed inputs. They are deliberately not wired to facts or sessions: nothing in the data says a typed input came from a recording, so no line is invented to complete the picture.
+
+Nothing here is synthesised — no invented people, relationships, sessions, or citations. Every node is keyboard reachable (`Tab`, then `Enter`/`Space`), hovering names it, and `Escape` closes the record sheet.
 
 ## Start everything with one command
 
@@ -57,7 +70,7 @@ Env: `KINDRED_MEMORY_URL` (default `http://127.0.0.1:8787`), `KINDRED_CAPTURE_BI
 |---|---|
 | `core.mjs` | All main-process logic (`KindredApp`): drives `CaptureBridge` (`../capture/bridge.mjs`) and `LiveWhisper` (`../capture/live.mjs`), talks to memory over HTTP. No Electron, so it can be tested. |
 | `main.cjs`, `preload.cjs` | Electron shell: window, orb, `⌘⇧K` shortcut, IPC. Adapted from local_ai (Second Nature). Windows are sandboxed, navigation and permission requests are denied, and the CSP blocks network access from the page. |
-| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
+| `index.html`, `renderer.js`, `renderer.css`, `view.mjs` | Hub UI: capture modes, chat, memory workspace, Atlas map. Focus rings, screen-reader labels, reduced motion, and a single-column layout under 1040px. |
 | `orb.html`, `orb.js`, `orb.css` | The floating mark and its sub-button island. |
 | `mark.mjs`, `mark.css` | The mark: one geometry source (five sage bars) and its motion — still at rest, the voice wave while listening, recording or translating. |
 
