@@ -17,18 +17,15 @@ In **Translate**, the page shows a live transcript under the stone: each heard l
 
 **Record** shows only the real recording state. It does not invent a transcript, because capture does not stream text for ordinary recordings.
 
-## Memory workspace (four areas)
+## Memory workspace (three regions)
 
-| Area | Reads | Shows |
-|---|---|---|
-The layout is deliberately table-first, the way a CRM record works: a list you scan, a record you read, a log you audit — not cards of prose.
+The layout is table-first, the way a CRM record works: a list you scan, a list you search, and one big record panel that says everything about what you picked. Not four cards of prose.
 
-| Area | Reads | Shows |
+| Region | Reads | Shows |
 |---|---|---|
 | **People** (top left) | `GET /people` | A table — name (with the core memory as a subtitle), relation, fact count, voice-known dot. Selecting a row filters the layers and opens the person in the record panel. |
-| **Selected memory** (top right) | the chosen fact | A record panel: full text, `person / kind / origin` tags, then label→value rows for saved date, scope, uses and evidence session, the original quote, and **Play the moment** when the audio still exists. |
 | **Memory layers** (bottom left) | `GET /inputs`, `GET /memories` | Four tabs — **Inputs**, **Evidence**, **Facts**, **Core** — as a table with `Ref · Content · Person`, colour-coded kind tags, inline search and person/type filters. |
-| **Recall activity** (bottom right) | `GET /traces` | A log — `Status · Question · Sources`. **verified** (moss) or **no source** (grey), the answer, and the citation count from the retrieval steps. An ungrounded answer says `no source`; nothing is invented. |
+| **Record** (right, full height) | the chosen fact + `GET /traces` | The selected memory: full text, `person / kind / origin` tags, label→value rows for saved date, scope, uses and evidence session, the original quote, and **Play the moment** when the audio exists. The lower part is **Recent recalls** — **verified** (moss) or **no source** (grey), citation count and date. Nothing is invented. |
 
 Read-only IPC backs these panels: `memory:people`, `memory:memories`, `memory:inputs`, `memory:traces`. `core.mjs` turns each memory's repo-relative quote audio into a `file://` URL only when the file still exists, so **Play the moment** is never offered for missing audio.
 
